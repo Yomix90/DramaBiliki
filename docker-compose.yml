@@ -15,7 +15,8 @@ services:
       # Required: long random strings (e.g. `openssl rand -hex 32`)
       SECRET_KEY: ${SECRET_KEY:-}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in the environment}
+      # Admin panel stays locked until this is set (the API works without it)
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # Public HTTPS URL of the bridge, e.g. https://api.dramabiliki.com
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
       SOURCE_BASE_URL: ${SOURCE_BASE_URL:-https://dramadunyam.com}

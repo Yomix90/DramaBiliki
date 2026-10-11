@@ -205,7 +205,7 @@ In the app: **Profile → Server Bridge URL** → `https://api.your-domain.com`,
 
 ### Alternative: plain Docker / systemd
 ```bash
-docker compose up -d --build      # needs ADMIN_PASSWORD in the environment or .env
+docker compose up -d --build      # set ADMIN_PASSWORD (env or .env) to unlock /admin
 ```
 With systemd, run `python -m bridge` (one worker) behind Nginx forwarding
 `Host` and `X-Forwarded-Proto`.
