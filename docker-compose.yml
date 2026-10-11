@@ -22,6 +22,8 @@ services:
       SOURCE_BASE_URL: ${SOURCE_BASE_URL:-https://dramadunyam.com}
       SOURCE_CDN_PRIMARY: ${SOURCE_CDN_PRIMARY:-cdn2.dramaflix.net}
       SOURCE_CDN_FAILOVER: ${SOURCE_CDN_FAILOVER:-cdn.dramaflix.net}
+      # Proxy for source requests when the VPS IP gets HTTP 403 from Cloudflare
+      SOURCE_PROXY: ${SOURCE_PROXY:-}
       STREAM_CACHE_TTL_SECONDS: ${STREAM_CACHE_TTL_SECONDS:-600}
       PROXY_SEGMENTS: ${PROXY_SEGMENTS:-false}
       ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}

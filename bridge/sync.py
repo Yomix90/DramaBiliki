@@ -213,6 +213,11 @@ class SyncService:
                     logger.info(f"Scanning catalog page {page}/{pages_to_crawl}...")
                     catalog_data = await self.scanner.fetch_catalog_page(page=page, limit=48, lang="en")
                     if not catalog_data or "data" not in catalog_data:
+                        if page == 1:
+                            raise RuntimeError(
+                                "Source catalog unreachable (HTTP 403 = the source blocks this server's IP). "
+                                "Set the SOURCE_PROXY environment variable to route requests through another IP."
+                            )
                         logger.warning(f"No catalog data received for page {page}")
                         break
 

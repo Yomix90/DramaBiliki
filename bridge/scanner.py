@@ -39,6 +39,7 @@ class SourceScanner:
                 },
                 timeout=settings.SCANNER_TIMEOUT_SECONDS,
                 follow_redirects=True,
+                **settings.source_client_kwargs(),
             )
 
             # Initialize dd_bilet cookie by requesting /api/config
@@ -74,6 +75,12 @@ class SourceScanner:
 
                     if response.status_code == 200:
                         return response
+                    elif response.status_code == 403:
+                        logger.warning(
+                            f"HTTP 403 for {url}: the source (Cloudflare) is blocking this server's IP. "
+                            "Set SOURCE_PROXY to route source requests through another IP."
+                        )
+                        return None
                     elif response.status_code == 404:
                         logger.debug(f"Source returned 404 for {url}")
                         return None

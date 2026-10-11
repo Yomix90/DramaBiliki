@@ -147,3 +147,11 @@ def test_admin_rejects_cross_origin_post(client):
         follow_redirects=False,
     )
     assert response.status_code == 403
+
+
+def test_source_proxy_option(monkeypatch):
+    from bridge.config import settings
+    monkeypatch.setattr(settings, "SOURCE_PROXY", "")
+    assert settings.source_client_kwargs() == {}
+    monkeypatch.setattr(settings, "SOURCE_PROXY", "http://user:pw@proxy.example:8080")
+    assert settings.source_client_kwargs() == {"proxy": "http://user:pw@proxy.example:8080"}

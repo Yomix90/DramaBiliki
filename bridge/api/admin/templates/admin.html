@@ -412,6 +412,7 @@
                             <tr><th class="text-secondary">PUBLIC_BASE_URL</th><td><code>{{ settings.PUBLIC_BASE_URL or '(déduit de la requête)' }}</code> — URL à saisir dans l'app mobile (Profil → URL du serveur)</td></tr>
                             <tr><th class="text-secondary">Base de données</th><td><code>{{ settings.DATABASE_URL.split('://')[0] }}</code></td></tr>
                             <tr><th class="text-secondary">Source</th><td><code>{{ settings.SOURCE_BASE_URL }}</code></td></tr>
+                            <tr><th class="text-secondary">Proxy vers la source</th><td>{{ 'Configuré (SOURCE_PROXY)' if settings.SOURCE_PROXY else 'Aucun — requêtes directes depuis le VPS' }}</td></tr>
                             <tr><th class="text-secondary">CDN principal / secours</th><td><code>{{ settings.SOURCE_CDN_PRIMARY }}</code> / <code>{{ settings.SOURCE_CDN_FAILOVER }}</code></td></tr>
                             <tr><th class="text-secondary">Proxy des segments vidéo</th><td>{{ 'Activé' if settings.PROXY_SEGMENTS else 'Désactivé (les apps lisent le CDN directement)' }}</td></tr>
                             <tr><th class="text-secondary">Planificateur</th><td>{{ 'Activé' if settings.ENABLE_SCHEDULER else 'Désactivé' }} — légère toutes les {{ settings.LIGHT_SYNC_INTERVAL_MINUTES }} min, complète à {{ settings.FULL_SYNC_HOUR_UTC }}h UTC</td></tr>

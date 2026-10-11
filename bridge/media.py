@@ -33,6 +33,7 @@ async def download_and_cache_cover(
             headers={"User-Agent": settings.SOURCE_USER_AGENT},
             timeout=15.0,
             follow_redirects=True,
+            **settings.source_client_kwargs(),
         )
         own_client = True
 

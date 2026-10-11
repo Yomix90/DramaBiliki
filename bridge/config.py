@@ -37,6 +37,11 @@ class Settings(BaseSettings):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
     )
 
+    # Optional outbound proxy for every request to the source and its CDNs, e.g.
+    # http://user:pass@host:port or socks5://host:port. Needed when the source
+    # (behind Cloudflare) blocks the VPS datacenter IP with HTTP 403.
+    SOURCE_PROXY: str = os.getenv("SOURCE_PROXY", "").strip()
+
     # Persistent data (database, generated secret)
     DATA_DIR: Path = Path(os.getenv("DATA_DIR", str(BASE_DIR)))
 
@@ -80,6 +85,10 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
+
+    def source_client_kwargs(self) -> dict:
+        """Common httpx.AsyncClient options for outbound requests to the source."""
+        return {"proxy": self.SOURCE_PROXY} if self.SOURCE_PROXY else {}
 
     @property
     def is_production(self) -> bool:

@@ -42,6 +42,7 @@ class StreamResolver:
                 },
                 timeout=12.0,
                 follow_redirects=True,
+                **settings.source_client_kwargs(),
             )
             # Initialize session cookie
             try:
