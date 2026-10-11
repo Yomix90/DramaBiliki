@@ -1,0 +1,82 @@
+{% extends "_base.html" %}
+{% set active = 'users' %}
+{% block title %}Utilisateurs — DramaBiliki Admin{% endblock %}
+{% block content %}
+<div class="row g-3 mb-3">
+    {% for label, value, icon, color in [
+        ('Comptes', stats.accounts, 'bi-person-check', '#3fb950'),
+        ('Invités', stats.guests, 'bi-phone', '#58a6ff'),
+        ('Sans pub', stats.ads_free, 'bi-badge-ad', '#f0c040'),
+        ('Bannis', stats.banned, 'bi-slash-circle', '#ff2e55'),
+    ] %}
+    <div class="col-6 col-md-3">
+        <div class="card p-3">
+            <div class="d-flex justify-content-between"><span class="small text-secondary text-uppercase fw-semibold">{{ label }}</span><i class="bi {{ icon }}" style="color: {{ color }}"></i></div>
+            <div class="fs-3 fw-bold text-white">{{ value }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="card p-3">
+    <form method="get" class="row g-2 mb-3">
+        <div class="col-md"><input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="E-mail ou nom…"></div>
+        <div class="col-8 col-md-auto">
+            <select name="kind" class="form-select form-select-sm">
+                <option value="accounts" {{ 'selected' if kind == 'accounts' }}>Comptes inscrits</option>
+                <option value="guests" {{ 'selected' if kind == 'guests' }}>Invités (appareils)</option>
+                <option value="all" {{ 'selected' if kind == 'all' }}>Tous</option>
+            </select>
+        </div>
+        <div class="col-4 col-md-auto"><button class="btn btn-sm btn-brand w-100">Filtrer</button></div>
+    </form>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle small">
+            <thead><tr><th>Utilisateur</th><th>Inscription</th><th>Dernière activité</th><th>Favoris</th><th>Épisodes suivis</th><th>Statut</th><th class="text-end">Actions</th></tr></thead>
+            <tbody>
+            {% for u in users %}
+                <tr class="{{ '' if u.is_active != false else 'opacity-50' }}">
+                    <td>
+                        <div class="text-white fw-semibold">{{ u.username or ('Invité #' ~ u.id) }}</div>
+                        <div class="text-secondary">{{ u.email or ('appareil ' ~ (u.device_id or '')[:8]) }}</div>
+                    </td>
+                    <td class="text-secondary">{{ u.created_at.strftime('%Y-%m-%d') if u.created_at else '—' }}</td>
+                    <td class="text-secondary">{{ u.last_seen_at.strftime('%Y-%m-%d %H:%M') if u.last_seen_at else '—' }}</td>
+                    <td>{{ fav_counts.get(u.id, 0) }}</td>
+                    <td>{{ watch_counts.get(u.id, 0) }}</td>
+                    <td>
+                        {% if u.is_active == false %}<span class="badge text-bg-danger">Banni</span>{% endif %}
+                        {% if u.ads_free %}<span class="badge text-bg-warning">Sans pub</span>{% endif %}
+                        {% if u.email %}<span class="badge text-bg-success">Compte</span>{% else %}<span class="badge text-bg-secondary">Invité</span>{% endif %}
+                    </td>
+                    <td class="text-end text-nowrap">
+                        <form method="post" action="/admin/users/{{ u.id }}/toggle" class="d-inline">
+                            <input type="hidden" name="field" value="ads_free">
+                            <button class="btn btn-sm {{ 'btn-warning' if u.ads_free else 'btn-outline-secondary' }}" title="Sans publicité"><i class="bi bi-badge-ad"></i></button>
+                        </form>
+                        <form method="post" action="/admin/users/{{ u.id }}/toggle" class="d-inline">
+                            <input type="hidden" name="field" value="is_active">
+                            <button class="btn btn-sm {{ 'btn-outline-secondary' if u.is_active != false else 'btn-danger' }}" title="Bannir / réactiver"><i class="bi bi-slash-circle"></i></button>
+                        </form>
+                        <form method="post" action="/admin/users/{{ u.id }}/delete" class="d-inline" onsubmit="return confirm('Supprimer cet utilisateur et ses données ?')">
+                            <button class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7" class="text-center text-secondary py-4">Aucun utilisateur.</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if pages > 1 %}
+    <div class="d-flex justify-content-between align-items-center mt-3 small">
+        <span class="text-secondary">{{ total }} utilisateurs · page {{ page }}/{{ pages }}</span>
+        <div class="btn-group">
+            <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if page <= 1 }}" href="?q={{ q|urlencode }}&kind={{ kind }}&page={{ page - 1 }}">‹</a>
+            <a class="btn btn-sm btn-outline-secondary {{ 'disabled' if page >= pages }}" href="?q={{ q|urlencode }}&kind={{ kind }}&page={{ page + 1 }}">›</a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

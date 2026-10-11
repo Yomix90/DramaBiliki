@@ -1,4 +1,8 @@
+import base64
 import datetime
+import hashlib
+import hmac
+import os
 from typing import Optional
 import jwt
 from fastapi import Depends, HTTPException, Header, status
@@ -27,6 +31,26 @@ def decode_access_token(token: str) -> Optional[dict]:
         return payload
     except jwt.PyJWTError:
         return None
+
+PBKDF2_ITERATIONS = 240_000
+
+
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, PBKDF2_ITERATIONS)
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
+def verify_password(password: str, stored: Optional[str]) -> bool:
+    try:
+        algo, iterations, salt_b64, digest_b64 = (stored or "").split("$")
+        if algo != "pbkdf2_sha256":
+            return False
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), base64.b64decode(salt_b64), int(iterations))
+        return hmac.compare_digest(digest, base64.b64decode(digest_b64))
+    except (ValueError, TypeError):
+        return False
+
 
 def get_or_create_device_user(
     device_id: str,
@@ -77,6 +101,8 @@ async def get_current_user(
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if user.is_active is False:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
 
     return user
 

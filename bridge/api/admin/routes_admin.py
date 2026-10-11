@@ -244,48 +244,6 @@ async def toggle_series_featured(series_id: int, db: Session = Depends(get_db), 
     return _redirect(f"« {series.title} » {'mise en avant' if series.is_featured else 'retirée de la une'}")
 
 
-@router.post("/series/{series_id}/edit")
-async def edit_series(
-    series_id: int,
-    title: str = Form(...),
-    description: str = Form(""),
-    title_fr: str = Form(""),
-    title_ar: str = Form(""),
-    platform: str = Form(""),
-    rating: str = Form(""),
-    is_popular: Optional[str] = Form(None),
-    is_new: Optional[str] = Form(None),
-    db: Session = Depends(get_db),
-    admin: str = Depends(require_admin),
-):
-    series = db.query(Series).filter(Series.id == series_id).first()
-    if not series:
-        return _redirect("Série introuvable", "danger")
-
-    series.title = title.strip() or series.title
-    series.description = description
-    titles = dict(series.titles_json or {})
-    titles["en"] = series.title
-    for lang, value in (("fr", title_fr), ("ar", title_ar)):
-        if value.strip():
-            titles[lang] = value.strip()
-        else:
-            titles.pop(lang, None)
-    series.titles_json = titles
-    descriptions = dict(series.descriptions_json or {})
-    descriptions["en"] = description
-    series.descriptions_json = descriptions
-    series.platform = platform.strip()
-    try:
-        series.rating = max(0.0, min(5.0, float(rating.replace(",", "."))))
-    except ValueError:
-        pass
-    series.is_popular = is_popular == "true"
-    series.is_new = is_new == "true"
-    db.commit()
-    return _redirect(f"« {series.title} » modifiée")
-
-
 @router.post("/series/{series_id}/resync")
 async def resync_series(series_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     series = db.query(Series).filter(Series.id == series_id).first()

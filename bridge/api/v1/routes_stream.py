@@ -11,7 +11,8 @@ import httpx
 from bridge.config import settings
 from bridge.source_session import source_headers
 from bridge.database import get_db
-from bridge.models import Episode, Series
+from bridge.models import Episode, Series, TelegramChannel
+from bridge.uploads import local_video_path
 from bridge.streamer import stream_resolver
 from bridge.telegram.client import telegram_service
 from bridge.urls import public_base_url
@@ -214,14 +215,25 @@ async def stream_telegram_episode(
     if not series:
         raise HTTPException(status_code=404, detail="Series not found")
     episode = db.query(Episode).filter(Episode.series_id == series.id, Episode.num == ep_num).first()
-    if not episode or not episode.tg_message_id:
+    if not episode:
+        raise HTTPException(status_code=404, detail="Episode not available")
+
+    # Uploaded to the VPS disk
+    local = local_video_path(episode)
+    if local is not None:
+        if not local.is_file():
+            raise HTTPException(status_code=404, detail="Video file missing on the server")
+        return FileResponse(local, media_type=episode.mime_type or "video/mp4", headers={"Cache-Control": "public, max-age=86400"})
+
+    if not episode.tg_message_id:
         raise HTTPException(status_code=404, detail="Episode not available")
 
     cached = _cache_path(episode)
     if cached.is_file():
         return FileResponse(cached, media_type=episode.mime_type or "video/mp4", headers={"Cache-Control": "public, max-age=86400"})
 
-    access_hash = series.telegram_channel.access_hash if series.telegram_channel else None
+    channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == episode.tg_peer_id).first()
+    access_hash = channel.access_hash if channel else None
     try:
         message = await telegram_service.get_message(episode.tg_peer_id, access_hash, episode.tg_message_id)
     except FileNotFoundError:

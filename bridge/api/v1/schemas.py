@@ -66,6 +66,35 @@ class AuthResponse(BaseModel):
     user_id: int
     device_id: str
     preferred_language: str
+    email: Optional[str] = None
+    username: Optional[str] = None
+    is_guest: bool = True
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    username: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ProfileOut(BaseModel):
+    id: int
+    email: Optional[str] = None
+    username: Optional[str] = None
+    is_guest: bool
+    ads_free: bool = False
+    preferred_language: str = "en"
+    created_at: Optional[str] = None
+
+
+class ProfileUpdate(BaseModel):
+    username: Optional[str] = None
+    preferred_language: Optional[str] = None
 
 class ProgressUpdateRequest(BaseModel):
     series_id: int

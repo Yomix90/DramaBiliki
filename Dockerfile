@@ -7,6 +7,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# ffmpeg: video duration, thumbnails and fast .ts -> .mp4 remux for uploads
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Python requirements (Pillow ships manylinux wheels with WebP support: no compiler needed)
 COPY requirements.txt .
 RUN pip install -r requirements.txt

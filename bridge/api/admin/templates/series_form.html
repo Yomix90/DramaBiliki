@@ -1,0 +1,117 @@
+{% extends "_base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}{{ series.title if series else 'Nouvelle série' }} — DramaBiliki Admin{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center gap-2 mb-3">
+    <a href="/admin?tab=series" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
+    <h1 class="h5 fw-bold mb-0">{{ series.title if series else 'Nouvelle série' }}</h1>
+    {% if series %}<span class="badge text-bg-secondary">#{{ series.id }} · {{ series.source_type }}</span>{% endif %}
+</div>
+
+<div class="row g-3">
+    <div class="col-xl-5">
+        <form class="card p-3" method="post" enctype="multipart/form-data"
+              action="{{ '/admin/series/' ~ series.id ~ '/save' if series else '/admin/series/new' }}">
+            <div class="d-flex gap-3 mb-3">
+                <div>
+                    <img id="coverPreview" class="rounded" style="width:120px;height:160px;object-fit:cover;background:#1d2026"
+                         src="{% if series and series.local_cover %}/media/covers/{{ series.local_cover }}?w=300{% elif series and series.cover_url %}{{ series.cover_url }}{% endif %}" alt="">
+                </div>
+                <div class="flex-grow-1">
+                    <label class="form-label small text-secondary">Affiche (portrait 3:4, JPG/PNG/WEBP)</label>
+                    <input type="file" name="cover" accept="image/*" class="form-control form-control-sm mb-2"
+                           onchange="if(this.files[0]){document.getElementById('coverPreview').src=URL.createObjectURL(this.files[0])}">
+                    <input type="url" name="cover_url" class="form-control form-control-sm" placeholder="… ou URL d'une image">
+                    {% if not series %}<div class="small text-secondary mt-2">Sans image, la miniature du premier épisode téléversé sera utilisée.</div>{% endif %}
+                </div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label small text-secondary">Titre (EN / principal) *</label>
+                <input name="title" class="form-control" required value="{{ series.title if series else '' }}">
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-md-6"><label class="form-label small text-secondary">Titre FR</label>
+                    <input name="title_fr" class="form-control" value="{{ (series.titles_json or {}).get('fr', '') if series else '' }}"></div>
+                <div class="col-md-6"><label class="form-label small text-secondary">Titre AR</label>
+                    <input name="title_ar" class="form-control" dir="rtl" value="{{ (series.titles_json or {}).get('ar', '') if series else '' }}"></div>
+            </div>
+            <div class="mb-2"><label class="form-label small text-secondary">Synopsis (EN)</label>
+                <textarea name="description" rows="3" class="form-control">{{ series.description if series else '' }}</textarea></div>
+            <div class="mb-2"><label class="form-label small text-secondary">Synopsis FR</label>
+                <textarea name="description_fr" rows="2" class="form-control">{{ (series.descriptions_json or {}).get('fr', '') if series else '' }}</textarea></div>
+            <div class="mb-2"><label class="form-label small text-secondary">Synopsis AR</label>
+                <textarea name="description_ar" rows="2" class="form-control" dir="rtl">{{ (series.descriptions_json or {}).get('ar', '') if series else '' }}</textarea></div>
+            <div class="mb-2"><label class="form-label small text-secondary">Genres (séparés par des virgules)</label>
+                <input name="genres" class="form-control" placeholder="Romance, Vengeance, Milliardaire" value="{{ genres_text if series else '' }}"></div>
+            <div class="row g-2 mb-3">
+                <div class="col-6 col-md-4"><label class="form-label small text-secondary">Plateforme / studio</label>
+                    <input name="platform" class="form-control" value="{{ series.platform if series else 'DramaBiliki' }}"></div>
+                <div class="col-3 col-md-2"><label class="form-label small text-secondary">Note</label>
+                    <input name="rating" type="number" step="0.1" min="0" max="5" class="form-control" value="{{ series.rating if series else '4.8' }}"></div>
+                <div class="col-3 col-md-2"><label class="form-label small text-secondary">Année</label>
+                    <input name="release_year" type="number" class="form-control" value="{{ series.release_year or '' if series else '' }}"></div>
+                <div class="col-12 col-md-4"><label class="form-label small text-secondary">Visibilité</label>
+                    <select name="status" class="form-select">
+                        <option value="active" {{ 'selected' if not series or series.status == 'active' }}>Visible</option>
+                        <option value="inactive" {{ 'selected' if series and series.status != 'active' }}>Masquée</option>
+                    </select></div>
+            </div>
+            <div class="d-flex flex-wrap gap-3 mb-3">
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_popular" value="true" id="fPop" {{ 'checked' if series and series.is_popular }}><label class="form-check-label" for="fPop">Tendance (HOT)</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" value="true" id="fNew" {{ 'checked' if not series or series.is_new }}><label class="form-check-label" for="fNew">Nouveauté</label></div>
+                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_featured" value="true" id="fFeat" {{ 'checked' if series and series.is_featured }}><label class="form-check-label" for="fFeat">À la une</label></div>
+            </div>
+            <button class="btn btn-brand w-100"><i class="bi bi-save"></i> {{ 'Enregistrer' if series else 'Créer la série' }}</button>
+        </form>
+        {% if series %}
+        <form method="post" action="/admin/series/{{ series.id }}/delete" class="mt-2 text-end" onsubmit="return confirm('Supprimer définitivement cette série et ses épisodes ?')">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Supprimer la série</button>
+        </form>
+        {% endif %}
+    </div>
+
+    {% if series %}
+    <div class="col-xl-7">
+        <div class="card p-3">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="fw-bold mb-0">Épisodes ({{ episodes|length }})</h6>
+                <a href="/admin/upload?series_id={{ series.id }}" class="btn btn-sm btn-brand"><i class="bi bi-cloud-arrow-up"></i> Ajouter des épisodes</a>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th>N°</th><th>Source</th><th>Durée</th><th>Taille</th><th></th><th class="text-end">Actions</th></tr></thead>
+                    <tbody>
+                    {% for e in episodes %}
+                        <tr>
+                            <td>
+                                <form method="post" action="/admin/episodes/{{ e.id }}/number" class="d-flex gap-1">
+                                    <input type="number" name="num" value="{{ e.num }}" min="1" class="form-control form-control-sm" style="width:72px" onchange="this.form.submit()">
+                                </form>
+                            </td>
+                            <td class="small">
+                                {% if e.local_file %}<span class="badge text-bg-info">Serveur</span>
+                                {% elif e.tg_message_id %}<span class="badge" style="background:#229ED9">Telegram</span>
+                                {% else %}<span class="badge text-bg-secondary">Source web</span>{% endif %}
+                                <span class="text-secondary">{{ e.mime_type }}</span>
+                            </td>
+                            <td class="small">{{ (e.duration // 60) }}:{{ '%02d'|format(e.duration % 60) }}</td>
+                            <td class="small text-secondary">{{ (e.file_size / 1048576)|round(1) if e.file_size else '—' }} Mo</td>
+                            <td><a class="btn btn-sm btn-outline-secondary" href="/stream/{{ series.id }}/{{ e.num }}.mp4" target="_blank" title="Lire"><i class="bi bi-play-fill"></i></a></td>
+                            <td class="text-end">
+                                <form method="post" action="/admin/episodes/{{ e.id }}/delete" class="d-inline" onsubmit="return confirm('Supprimer l\'épisode {{ e.num }} ?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="6" class="text-center text-secondary py-4">Aucun épisode. Cliquez « Ajouter des épisodes ».</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="small text-secondary mt-2">Changer un numéro échange automatiquement avec l'épisode qui le portait.</div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

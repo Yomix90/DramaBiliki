@@ -12,6 +12,7 @@ import asyncio
 import datetime
 import hashlib
 import logging
+import os
 import re
 from typing import Optional, Tuple
 
@@ -20,54 +21,40 @@ from telethon import errors
 
 from bridge.database import SessionLocal
 from bridge.media import save_cover_image
-from bridge.models import Episode, Genre, Series, SyncRun, TelegramChannel
+from bridge.models import AppConfig, Episode, Genre, Series, SyncRun, TelegramChannel
+from bridge.parsing import VIDEO_EXTENSIONS, parse_video_name, series_title_with_season
 from bridge.sync import _sync_lock
 from bridge.telegram.client import telegram_service
 
 logger = logging.getLogger("bridge.telegram.sync")
 
-_ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
-
-_EP_PATTERNS = [
-    re.compile(r"(?:\bep(?:isode|isodio)?|\bé?pisode|\bépi?|\bpart(?:ie)?|\bfolge|\bbölüm|الحلقة|حلقة|ح)\s*[.:#№-]?\s*(\d{1,4})", re.IGNORECASE),
-    re.compile(r"#\s*(\d{1,4})\b"),
-    re.compile(r"\b(\d{1,4})\s*/\s*\d{1,4}\b"),
-    re.compile(r"\be(\d{1,4})\b", re.IGNORECASE),
-]
-_HASHTAG = re.compile(r"#([^\s#]+)")
-_SEPARATORS = " \t-–—|:•·,.()[]{}"
-
+# Bump when detection changes so existing channels are rescanned once (imports are idempotent).
+SCAN_VERSION = 2
 
 def parse_caption(caption: str) -> Tuple[Optional[str], Optional[int]]:
     """Returns (series title, episode number) found in a caption, each possibly None."""
-    text = (caption or "").translate(_ARABIC_DIGITS).strip()
-    if not text:
-        return None, None
+    parsed = parse_video_name(caption)
+    return parsed.title, parsed.episode
 
-    episode = None
-    for pattern in _EP_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            episode = int(match.group(1))
-            text = text[:match.start()] + " " + text[match.end():]
-            break
 
-    lines = [ln for ln in (line.strip() for line in text.splitlines()) if ln]
-    title = None
-    for line in lines:
-        cleaned = _HASHTAG.sub(" ", line)
-        cleaned = re.sub(r"https?://\S+|t\.me/\S+|@\w+", " ", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip(_SEPARATORS)
-        if len(cleaned) >= 2:
-            title = cleaned
-            break
-    if title is None:
-        tags = [t for t in _HASHTAG.findall(caption or "") if not t.isdigit()]
-        if tags:
-            title = tags[0].replace("_", " ").strip()
-    if title and len(title) > 200:
-        title = title[:200].rstrip()
-    return title or None, episode
+def detect_series_and_episode(caption: str, file_name: str) -> Tuple[Optional[str], Optional[int]]:
+    """
+    Combines the caption and the file name: a file name carrying an episode marker
+    ("Harem Wars - S01E03.ts") wins, otherwise the caption is used. Season 2+
+    becomes its own series ("Title - S2").
+    """
+    from_file = parse_video_name(file_name, is_filename=True) if file_name else None
+    from_caption = parse_video_name(caption)
+    if from_file and from_file.episode is not None and from_file.title:
+        chosen = from_file
+    elif from_caption.title or from_caption.episode is not None:
+        chosen = from_caption
+        if chosen.title is None and from_file and from_file.title:
+            chosen = chosen._replace(title=from_file.title)
+    else:
+        chosen = from_file or from_caption
+    title = series_title_with_season(chosen.title, chosen.season) if chosen.title else None
+    return title, chosen.episode
 
 
 def _slugify(text: str) -> str:
@@ -139,9 +126,28 @@ async def _save_thumbnail(client, message, series: Series) -> None:
         logger.debug(f"No thumbnail for message {message.id}: {e}")
 
 
-def _is_video(message) -> bool:
+def _file_ext(message) -> str:
     f = message.file
-    return f is not None and (message.video is not None or (f.mime_type or "").startswith("video/"))
+    ext = (getattr(f, "ext", None) or os.path.splitext(getattr(f, "name", None) or "")[1] or "").lower()
+    return ext
+
+
+def _is_video(message) -> bool:
+    """Videos, including .ts/.mkv files posted as plain documents."""
+    f = message.file
+    if f is None:
+        return False
+    if message.video is not None or (f.mime_type or "").lower().startswith("video/"):
+        return True
+    return _file_ext(message) in VIDEO_EXTENSIONS
+
+
+def _mime_type(message) -> str:
+    mime = (message.file.mime_type or "").lower()
+    if mime.startswith("video/"):
+        return mime[:64]
+    return {".ts": "video/mp2t", ".m2ts": "video/mp2t", ".mts": "video/mp2t", ".mkv": "video/x-matroska",
+            ".webm": "video/webm", ".mov": "video/quicktime", ".avi": "video/x-msvideo"}.get(_file_ext(message), "video/mp4")
 
 
 async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False) -> int:
@@ -168,7 +174,7 @@ async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False
         if existing:
             continue
 
-        title, ep_num = parse_caption(message.message or "")
+        title, ep_num = detect_series_and_episode(message.message or "", getattr(message.file, "name", None) or "")
         if channel.mode == "single" or not title:
             title = channel.title or "Telegram"
         series = _get_or_create_series(db, channel, title, genre)
@@ -182,12 +188,12 @@ async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False
             num=ep_num,
             title=f"Episode {ep_num}",
             titles_json={"en": f"Episode {ep_num}", "fr": f"Épisode {ep_num}", "ar": f"الحلقة {ep_num}"},
-            duration=int(message.file.duration or 0) or 120,
+            duration=int(getattr(message.file, "duration", None) or 0) or 120,
             is_free=True,
             tg_peer_id=channel.peer_id,
             tg_message_id=message.id,
             file_size=message.file.size or 0,
-            mime_type=(message.file.mime_type or "video/mp4")[:64],
+            mime_type=_mime_type(message),
         ))
         if not series.local_cover:
             await _save_thumbnail(client, message, series)
@@ -227,6 +233,16 @@ async def run_telegram_sync(channel_id: Optional[int] = None, full: bool = False
 
     async with _sync_lock:
         db = SessionLocal()
+        # Detection improved (e.g. .ts documents, file names): rescan every channel once.
+        scan_row = db.get(AppConfig, "tg_scan_version")
+        if scan_row is None or scan_row.value != str(SCAN_VERSION):
+            full = True
+            channel_id = None
+            if scan_row is None:
+                db.add(AppConfig(key="tg_scan_version", value=str(SCAN_VERSION), description="Telegram import version"))
+            else:
+                scan_row.value = str(SCAN_VERSION)
+            db.commit()
         run = SyncRun(sync_type="telegram", status="running", started_at=datetime.datetime.utcnow())
         db.add(run)
         db.commit()

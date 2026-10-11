@@ -33,6 +33,11 @@ _ADDED_COLUMNS = {
         "tg_message_id": "BIGINT",
         "file_size": "BIGINT DEFAULT 0",
         "mime_type": "VARCHAR(64) DEFAULT ''",
+        "local_file": "VARCHAR(255) DEFAULT ''",
+    },
+    "users": {
+        "is_active": "BOOLEAN DEFAULT 1",
+        "ads_free": "BOOLEAN DEFAULT 0",
     },
 }
 

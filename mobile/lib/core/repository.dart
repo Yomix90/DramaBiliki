@@ -3,6 +3,7 @@ import 'package:video_player/video_player.dart';
 import 'api_client.dart';
 import '../models/genre.dart';
 import '../models/home_feed.dart';
+import '../models/account.dart';
 import '../models/library.dart';
 import '../models/series.dart';
 
@@ -80,6 +81,60 @@ class DramaRepository {
   }
 
   /// Progressive MP4 served by the bridge from the Telegram channel (supports HTTP Range).
+  // ---------------------------------------------------------------------------
+  // Accounts
+  // ---------------------------------------------------------------------------
+
+  Future<UserProfile> me() async {
+    final response = await api.dio.get('/api/v1/me');
+    return UserProfile.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Logs in (or registers) and stores the returned token. Throws [AuthException] with the server message.
+  Future<void> login(String email, String password) => _authenticate('/api/v1/auth/login', {
+        'email': email,
+        'password': password,
+      });
+
+  Future<void> register(String email, String password, String username) => _authenticate('/api/v1/auth/register', {
+        'email': email,
+        'password': password,
+        'username': username,
+      });
+
+  Future<void> _authenticate(String path, Map<String, dynamic> body) async {
+    try {
+      final response = await api.dio.post(path, data: body);
+      final token = (response.data as Map<String, dynamic>)['access_token'] as String?;
+      if (token == null || token.isEmpty) throw AuthException('');
+      await api.preferences.setAuthToken(token);
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      final detail = data is Map ? data['detail']?.toString() : null;
+      throw AuthException(detail ?? '');
+    }
+  }
+
+  /// Drops the account session and continues as a fresh guest of this device.
+  Future<void> logout() async {
+    await api.preferences.clearAuthToken();
+    await api.authenticateDevice();
+  }
+
+  // ---------------------------------------------------------------------------
+  // App update & ads
+  // ---------------------------------------------------------------------------
+
+  Future<AppUpdateInfo> checkVersion(String currentVersion) async {
+    final response = await api.dio.get('/api/v1/app/version', queryParameters: {'current': currentVersion});
+    return AppUpdateInfo.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  Future<AdsConfig> adsConfig() async {
+    final response = await api.dio.get('/api/v1/config/ads');
+    return AdsConfig.fromJson(response.data as Map<String, dynamic>);
+  }
+
   Uri streamUri(int seriesId, int episodeNum) => Uri.parse('$baseUrl/stream/$seriesId/$episodeNum.mp4');
 
   /// Loads the WebVTT subtitles of an episode; an empty file simply shows nothing.

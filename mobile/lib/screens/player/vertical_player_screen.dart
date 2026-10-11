@@ -7,6 +7,8 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../core/app_theme.dart';
 import '../../core/localization.dart';
 import '../../core/repository.dart';
+import '../../core/rewarded_ads.dart';
+import '../../models/account.dart';
 import '../../models/series.dart';
 import '../../providers/app_providers.dart';
 import '../../widgets/episode_sheet.dart';
@@ -114,6 +116,11 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
   /// Episodes finished during this session (merged with the server's watched flags).
   final Set<int> _watched = {};
 
+  /// Rewarded-ad gate: episode waiting behind an ad, and episodes already counted.
+  int? _adGateEpisode;
+  bool _adLoading = false;
+  final Set<int> _countedForAds = {};
+
   SeriesDetailModel get _detail => widget.detail;
   int get _seriesId => _detail.id;
   int get _total => _detail.availableEpisodes > 0 ? _detail.availableEpisodes : _detail.episodes.length;
@@ -131,6 +138,7 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
       if (mounted) setState(() {});
     });
 
+    ref.read(adsConfigProvider); // start fetching the ad policy
     _current = widget.initialEpisode.clamp(1, _total > 0 ? _total : 1);
     _pageController = PageController(initialPage: _current - 1);
     _startEpisode(_current, seekSeconds: widget.startPositionSeconds ?? _resumePointFor(_current));
@@ -153,7 +161,7 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _inForeground = true;
-      if (!_userPaused) _currentController?.play();
+      if (!_userPaused && _adGateEpisode != _current) _currentController?.play();
     } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       _inForeground = false;
       _currentController?.pause();
@@ -196,9 +204,45 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
     await c.setPlaybackSpeed(_boosted ? 2.0 : _speed);
     c.removeListener(_onTick);
     c.addListener(_onTick);
-    if (!_userPaused && _inForeground) await c.play();
+    if (_passAdGate(ep) && !_userPaused && _inForeground) await c.play();
 
     _preload(ep + 1);
+  }
+
+  /// Counts watched episodes; returns false (and shows the gate) when an ad is due.
+  bool _passAdGate(int ep) {
+    if (_countedForAds.contains(ep)) return true;
+    final cfg = ref.read(adsConfigProvider).value;
+    if (cfg == null || !cfg.enabled) return true;
+    final prefs = ref.read(preferencesProvider);
+    final count = prefs.getAdsCounter();
+    if (count >= cfg.everyNEpisodes) {
+      if (_adGateEpisode != ep) setState(() => _adGateEpisode = ep);
+      return false;
+    }
+    prefs.setAdsCounter(count + 1);
+    _countedForAds.add(ep);
+    if (_adGateEpisode != null) setState(() => _adGateEpisode = null);
+    return true;
+  }
+
+  Future<void> _watchAd(AppLocale loc) async {
+    if (_adLoading) return;
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _adLoading = true);
+    final cfg = ref.read(adsConfigProvider).value ?? AdsConfig.disabled;
+    final outcome = await RewardedAds.show(cfg.rewardedUnitId);
+    if (!mounted) return;
+    setState(() => _adLoading = false);
+    if (outcome == AdOutcome.dismissed) {
+      messenger.showSnackBar(SnackBar(content: Text(loc.t('ad_not_finished'))));
+      return;
+    }
+    // Rewarded, or no ad available: unlock the next episodes.
+    await ref.read(preferencesProvider).setAdsCounter(0);
+    final ep = _adGateEpisode;
+    setState(() => _adGateEpisode = null);
+    if (ep != null && ep == _current) _startEpisode(ep);
   }
 
   void _preload(int ep) {
@@ -272,7 +316,7 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
 
   void _togglePlay() {
     final c = _currentController;
-    if (c == null) return;
+    if (c == null || _adGateEpisode == _current) return;
     if (c.value.isPlaying) {
       c.pause();
       setState(() => _userPaused = true);
@@ -650,7 +694,81 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
 
         if (isCurrent && _heartPos != null && _heartKey > 0)
           HeartBurst(key: ValueKey(_heartKey), position: _heartPos!),
+
+        if (isCurrent && _adGateEpisode == ep) Positioned.fill(child: _buildAdGate(loc)),
       ],
+    );
+  }
+
+  Widget _buildAdGate(AppLocale loc) {
+    // Opaque to taps so the video underneath cannot be resumed or liked.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {},
+      onDoubleTap: () {},
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.82),
+        child: SafeArea(
+          child: Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                onPressed: () => Navigator.pop(context),
+              ),
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 36),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 72,
+                        height: 72,
+                        decoration: const BoxDecoration(gradient: AppTheme.primaryGradient, shape: BoxShape.circle),
+                        child: const Icon(Icons.lock_open_rounded, color: Colors.white, size: 36),
+                      ),
+                      const SizedBox(height: 20),
+                      Text(
+                        loc.t('ad_gate_title'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        loc.t('ad_gate_desc'),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white70, height: 1.4),
+                      ),
+                      const SizedBox(height: 24),
+                      GestureDetector(
+                        onTap: () => _watchAd(loc),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
+                          decoration: BoxDecoration(gradient: AppTheme.primaryGradient, borderRadius: BorderRadius.circular(28)),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_adLoading)
+                                const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                              else
+                                const Icon(Icons.play_circle_fill_rounded, color: Colors.white),
+                              const SizedBox(width: 10),
+                              Text(
+                                loc.t(_adLoading ? 'ad_loading' : 'watch_ad'),
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

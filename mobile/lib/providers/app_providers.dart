@@ -3,6 +3,7 @@ import '../core/api_client.dart';
 import '../core/constants.dart';
 import '../core/preferences.dart';
 import '../core/repository.dart';
+import '../models/account.dart';
 import '../models/genre.dart';
 import '../models/home_feed.dart';
 import '../models/library.dart';
@@ -246,4 +247,33 @@ void refreshWatchState(WidgetRef ref) {
   ref.invalidate(homeFeedProvider);
   ref.invalidate(libraryProvider);
   ref.invalidate(seriesDetailProvider);
+}
+
+// ---------------------------------------------------------------------------
+// Account, ads
+// ---------------------------------------------------------------------------
+
+/// Current user's profile (guest or registered); null when the server is unreachable.
+final accountProvider = FutureProvider<UserProfile?>((ref) async {
+  try {
+    return await ref.watch(repositoryProvider).me();
+  } catch (_) {
+    return null;
+  }
+});
+
+final adsConfigProvider = FutureProvider<AdsConfig>((ref) async {
+  ref.watch(accountProvider); // ad-free accounts change the answer
+  try {
+    return await ref.watch(repositoryProvider).adsConfig();
+  } catch (_) {
+    return AdsConfig.disabled;
+  }
+});
+
+/// Reloads everything tied to the signed-in user (after login, register or logout).
+void refreshSession(WidgetRef ref) {
+  ref.invalidate(accountProvider);
+  ref.invalidate(favoritesProvider);
+  refreshWatchState(ref);
 }

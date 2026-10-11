@@ -1,0 +1,253 @@
+{% extends "_base.html" %}
+{% set active = 'upload' %}
+{% block title %}Téléverser — DramaBiliki Admin{% endblock %}
+{% block style %}
+.dropzone { border: 2px dashed #2f343d; border-radius: 14px; padding: 2.5rem 1rem; text-align: center; cursor: pointer; transition: .15s; }
+.dropzone.drag { border-color: var(--brand); background: rgba(255, 46, 85, .06); }
+.progress { height: 6px; background: #1d2026; }
+.row-title input, .row-ep input { background: transparent; border-color: transparent; }
+.row-title input:focus, .row-ep input:focus { background: #1d2026; }
+{% endblock %}
+{% block content %}
+<div class="row g-3">
+    <div class="col-xl-4">
+        <form class="card p-3 mb-3" method="post" action="/admin/upload/settings">
+            <h6 class="fw-bold mb-3"><i class="bi bi-hdd-network"></i> Stockage des vidéos</h6>
+            <div class="mb-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="radio" name="destination" value="telegram" id="dTg" {{ 'checked' if cfg.upload_destination == 'telegram' }}>
+                    <label class="form-check-label" for="dTg">Chaîne Telegram <span class="text-secondary small">(stockage illimité gratuit)</span></label>
+                </div>
+                <select name="channel_id" class="form-select form-select-sm mt-1 ms-4" style="width: calc(100% - 1.5rem)">
+                    <option value="">— Choisir la chaîne de destination —</option>
+                    {% for c in channels %}
+                    <option value="{{ c.id }}" {{ 'selected' if cfg.upload_channel_id == c.id|string }}>{{ c.title }}</option>
+                    {% endfor %}
+                </select>
+                {% if not tg.authorized %}<div class="small text-warning ms-4 mt-1">Compte Telegram non connecté (onglet Telegram du tableau de bord).</div>{% endif %}
+                <div class="small text-secondary ms-4 mt-1">Le compte doit pouvoir publier dans cette chaîne (admin).</div>
+            </div>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="radio" name="destination" value="local" id="dLocal" {{ 'checked' if cfg.upload_destination == 'local' }}>
+                <label class="form-check-label" for="dLocal">Disque du serveur <span class="text-secondary small">({{ free_gb }} Go libres, lecture la plus rapide)</span></label>
+            </div>
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" name="convert_ts" value="true" id="cTs" {{ 'checked' if cfg.upload_convert_ts == 'true' }} {{ '' if ffmpeg else 'disabled' }}>
+                <label class="form-check-label" for="cTs">Convertir .ts / .mkv en .mp4 <span class="text-secondary small">(sans perte, lecture et avance rapide plus fluides)</span></label>
+                {% if not ffmpeg %}<div class="small text-warning">ffmpeg absent sur le serveur.</div>{% endif %}
+            </div>
+            <button class="btn btn-sm btn-outline-light w-100">Enregistrer</button>
+        </form>
+
+        <div class="card p-3">
+            <h6 class="fw-bold mb-2"><i class="bi bi-magic"></i> Détection automatique</h6>
+            <p class="small text-secondary mb-2">La série et l'épisode sont lus dans le nom du fichier :</p>
+            <ul class="small text-secondary mb-0 ps-3">
+                <li><code>Harem Wars - System vs. Queen - S01E03.ts</code></li>
+                <li><code>Mon Drama - Épisode 12.mp4</code> · <code>Mon Drama EP12.mp4</code></li>
+                <li><code>Mon.Drama.S02E05.1080p.mkv</code> → série « Mon Drama - S2 »</li>
+                <li><code>مسلسل الحب الحلقة 7.mp4</code></li>
+            </ul>
+            <p class="small text-secondary mt-2 mb-0">Une série introuvable est créée automatiquement (affiche = miniature du 1er épisode). Un numéro d'épisode déjà présent est remplacé.</p>
+        </div>
+    </div>
+
+    <div class="col-xl-8">
+        <div class="card p-3">
+            <div class="row g-2 align-items-end mb-3">
+                <div class="col-md-5">
+                    <label class="form-label small text-secondary">Destination des épisodes</label>
+                    <select id="mode" class="form-select form-select-sm">
+                        <option value="auto" {{ '' if target_series else 'selected' }}>Détection automatique (crée les séries)</option>
+                        <option value="series" {{ 'selected' if target_series }}>Une série existante…</option>
+                    </select>
+                </div>
+                <div class="col-md-7" id="seriesPick" style="{{ '' if target_series else 'display:none' }}">
+                    <label class="form-label small text-secondary">Série</label>
+                    <select id="seriesId" class="form-select form-select-sm">
+                        {% for s in all_series %}
+                        <option value="{{ s.id }}" {{ 'selected' if target_series and target_series.id == s.id }}>{{ s.title }} (#{{ s.id }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <label class="dropzone d-block mb-3" id="drop">
+                <i class="bi bi-cloud-arrow-up fs-1 text-secondary"></i>
+                <div class="fw-semibold mt-2">Glissez vos vidéos ici ou cliquez pour choisir</div>
+                <div class="small text-secondary">MP4, TS, MKV, MOV… plusieurs fichiers à la fois</div>
+                <input type="file" id="files" multiple accept="video/*,.ts,.mkv,.m2ts,.mts" hidden>
+            </label>
+
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                <button class="btn btn-sm btn-brand" id="startBtn" disabled><i class="bi bi-play-fill"></i> Lancer le téléversement</button>
+                <button class="btn btn-sm btn-outline-secondary" id="clearBtn" disabled>Vider la liste</button>
+                <span class="small text-secondary ms-auto" id="summary"></span>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table align-middle small">
+                    <thead><tr><th>Fichier</th><th>Série détectée</th><th style="width:80px">Ép.</th><th style="width:34%">Progression</th><th></th></tr></thead>
+                    <tbody id="rows"><tr class="empty"><td colspan="5" class="text-center text-secondary py-4">Aucun fichier sélectionné.</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CHUNK = 8 * 1024 * 1024;      // 8 MB per request
+const PARALLEL_FILES = 2;           // files sent at the same time
+const PARALLEL_CHUNKS = 4;          // requests per file
+const items = [];
+const $ = (id) => document.getElementById(id);
+const fmt = (b) => b > 1073741824 ? (b / 1073741824).toFixed(2) + ' Go' : (b / 1048576).toFixed(1) + ' Mo';
+let running = false;
+
+$('mode').addEventListener('change', () => { $('seriesPick').style.display = $('mode').value === 'series' ? '' : 'none'; });
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove('drag'); }));
+drop.addEventListener('drop', ev => addFiles(ev.dataTransfer.files));
+$('files').addEventListener('change', ev => { addFiles(ev.target.files); ev.target.value = ''; });
+$('clearBtn').addEventListener('click', () => { if (running) return; items.length = 0; render(); });
+$('startBtn').addEventListener('click', start);
+
+async function addFiles(fileList) {
+    const files = [...fileList].filter(f => !items.some(i => i.file.name === f.name && i.file.size === f.size));
+    if (!files.length) return;
+    const res = await fetch('/admin/uploads/detect', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filenames: files.map(f => f.name)}),
+    });
+    const detections = res.ok ? await res.json() : [];
+    files.forEach((file, i) => {
+        const d = detections[i] || {};
+        items.push({file, title: d.title || '', episode: d.episode || '', existing: d.existing_series, supported: d.supported !== false,
+                    state: 'pending', sent: 0, jobId: null, server: null, error: ''});
+    });
+    items.sort((a, b) => (a.title || '').localeCompare(b.title || '') || (a.episode || 0) - (b.episode || 0));
+    render();
+}
+
+function render() {
+    const tbody = $('rows');
+    tbody.innerHTML = '';
+    if (!items.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-secondary py-4">Aucun fichier sélectionné.</td></tr>';
+    }
+    const auto = $('mode').value === 'auto';
+    items.forEach((it, idx) => {
+        const tr = document.createElement('tr');
+        const pct = it.state === 'uploading' ? Math.round(100 * it.sent / it.file.size)
+                  : it.server ? Math.round(100 * (it.server.progress || 0)) : (it.state === 'done' ? 100 : 0);
+        const label = it.error ? `<span class="text-danger">${it.error}</span>`
+            : it.state === 'pending' ? (it.supported ? '<span class="text-secondary">En attente</span>' : '<span class="text-danger">Format non pris en charge</span>')
+            : it.state === 'uploading' ? `Envoi ${pct}% · ${fmt(it.sent)} / ${fmt(it.file.size)}`
+            : it.server ? `${({queued: 'En file', processing: 'Traitement', sending: 'Envoi Telegram/stockage', done: 'Terminé', error: 'Erreur'})[it.server.status] || it.server.status} — ${it.server.message || ''}`
+            : '';
+        const barClass = it.error || (it.server && it.server.status === 'error') ? 'bg-danger' : (it.server && it.server.status === 'done') ? 'bg-success' : '';
+        const titleCell = auto
+            ? `<input class="form-control form-control-sm" value="${(it.title || '').replace(/"/g, '&quot;')}" placeholder="Titre de la série" ${it.state !== 'pending' ? 'disabled' : ''} onchange="items[${idx}].title=this.value">
+               ${it.existing ? `<div class="text-success" style="font-size:.72rem">↳ série existante #${it.existing.id}</div>` : (it.title ? '<div class="text-info" style="font-size:.72rem">↳ nouvelle série</div>' : '')}`
+            : '<span class="text-secondary">série choisie</span>';
+        tr.innerHTML = `
+            <td><div class="text-white text-truncate" style="max-width:260px" title="${it.file.name}">${it.file.name}</div><div class="text-secondary">${fmt(it.file.size)}</div></td>
+            <td class="row-title">${titleCell}</td>
+            <td class="row-ep"><input class="form-control form-control-sm" type="number" min="1" value="${it.episode || ''}" placeholder="auto" ${it.state !== 'pending' ? 'disabled' : ''} onchange="items[${idx}].episode=this.value"></td>
+            <td><div class="progress mb-1"><div class="progress-bar ${barClass}" style="width:${pct}%"></div></div><div>${label}</div>
+                ${it.server && it.server.status === 'done' ? `<a href="/admin/series/${it.server.result_series_id}" class="small">Voir la série → épisode ${it.server.result_episode}</a>` : ''}</td>
+            <td>${it.state === 'pending' && !running ? `<button class="btn btn-sm btn-link text-secondary p-0" onclick="items.splice(${idx},1);render()"><i class="bi bi-x-lg"></i></button>` : ''}</td>`;
+        tbody.appendChild(tr);
+    });
+    const total = items.reduce((a, i) => a + i.file.size, 0);
+    const done = items.filter(i => i.server && i.server.status === 'done').length;
+    $('summary').textContent = items.length ? `${items.length} fichier(s) · ${fmt(total)} · ${done} terminé(s)${speedText}` : '';
+    $('startBtn').disabled = running || !items.some(i => i.state === 'pending' && i.supported);
+    $('clearBtn').disabled = running || !items.length;
+}
+
+let speedText = '', bytesWindow = [];
+function trackSpeed(bytes) {
+    const now = performance.now();
+    bytesWindow.push([now, bytes]);
+    bytesWindow = bytesWindow.filter(([t]) => now - t < 5000);
+    const sum = bytesWindow.reduce((a, [, b]) => a + b, 0);
+    speedText = ` · ${(sum / 1048576 / 5).toFixed(1)} Mo/s`;
+}
+
+async function sendChunk(it, offset, blob) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            const res = await fetch(`/admin/uploads/${it.jobId}?offset=${offset}`, {method: 'PUT', body: blob});
+            if (res.ok) return;
+            const err = await res.json().catch(() => ({}));
+            if (res.status === 400) throw new Error(err.error || 'Refusé');
+        } catch (e) {
+            if (attempt === 4) throw e;
+        }
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+    }
+    throw new Error('Échec réseau');
+}
+
+async function uploadOne(it) {
+    it.state = 'uploading'; it.error = ''; render();
+    const mode = $('mode').value;
+    const init = await fetch('/admin/uploads/init', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({filename: it.file.name, size: it.file.size, mode,
+                              series_id: mode === 'series' ? $('seriesId').value : null,
+                              episode: it.episode || null, title: mode === 'auto' ? it.title : ''}),
+    });
+    const data = await init.json();
+    if (!init.ok) throw new Error(data.error || 'Initialisation refusée');
+    it.jobId = data.id;
+
+    const offsets = [];
+    for (let o = 0; o < it.file.size; o += CHUNK) offsets.push(o);
+    await Promise.all(Array.from({length: PARALLEL_CHUNKS}, async () => {
+        while (offsets.length) {
+            const offset = offsets.shift();
+            const blob = it.file.slice(offset, offset + CHUNK);
+            await sendChunk(it, offset, blob);
+            it.sent += blob.size; trackSpeed(blob.size); render();
+        }
+    }));
+    const done = await fetch(`/admin/uploads/${it.jobId}/complete`, {method: 'POST'});
+    const job = await done.json();
+    if (!done.ok) throw new Error(job.error || 'Finalisation refusée');
+    it.state = 'server'; it.server = job; render();
+}
+
+async function start() {
+    if ($('mode').value === 'auto' && items.some(i => i.state === 'pending' && i.supported && !i.title.trim())) {
+        if (!confirm('Certains fichiers n\'ont pas de série détectée : ils échoueront. Continuer ?')) return;
+    }
+    running = true; render();
+    const queue = items.filter(i => i.state === 'pending' && i.supported);
+    await Promise.all(Array.from({length: PARALLEL_FILES}, async () => {
+        while (queue.length) {
+            const it = queue.shift();
+            try { await uploadOne(it); } catch (e) { it.state = 'failed'; it.error = e.message; render(); }
+        }
+    }));
+    running = false; speedText = ''; render();
+}
+
+// Server-side processing progress (conversion, Telegram upload)
+setInterval(async () => {
+    if (!items.some(i => i.jobId && (!i.server || !['done', 'error'].includes(i.server.status)))) return;
+    try {
+        const jobs = await (await fetch('/admin/uploads/jobs')).json();
+        const byId = Object.fromEntries(jobs.map(j => [j.id, j]));
+        items.forEach(i => { if (i.jobId && byId[i.jobId] && i.state === 'server') i.server = byId[i.jobId]; });
+        render();
+    } catch (e) {}
+}, 2000);
+
+window.addEventListener('beforeunload', e => { if (running) { e.preventDefault(); e.returnValue = ''; } });
+</script>
+{% endblock %}

@@ -73,6 +73,14 @@ class PreferencesService {
     await _prefs.setBool(AppConstants.keySubtitles, enabled);
   }
 
+  int getAdsCounter() {
+    return _prefs.getInt(AppConstants.keyAdsCounter) ?? 0;
+  }
+
+  Future<void> setAdsCounter(int value) async {
+    await _prefs.setInt(AppConstants.keyAdsCounter, value);
+  }
+
   List<String> getRecentSearches() {
     return _prefs.getStringList(AppConstants.keyRecentSearches) ?? const [];
   }

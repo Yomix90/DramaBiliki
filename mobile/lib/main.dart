@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/app_theme.dart';
 import 'core/localization.dart';
 import 'core/preferences.dart';
+import 'core/rewarded_ads.dart';
 import 'providers/app_providers.dart';
 import 'screens/splash/splash_screen.dart';
 
@@ -18,6 +19,7 @@ void main() async {
     systemNavigationBarColor: Colors.black,
   ));
   final preferences = await PreferencesService.init();
+  RewardedAds.initialize(); // warms up AdMob in the background
 
   runApp(
     ProviderScope(

@@ -4,6 +4,7 @@ import '../../core/app_theme.dart';
 import '../../core/constants.dart';
 import '../../core/localization.dart';
 import '../../providers/app_providers.dart';
+import '../auth/auth_screen.dart';
 
 /// Profile tab: viewer card, stats and settings.
 class SettingsScreen extends ConsumerWidget {
@@ -92,6 +93,8 @@ class SettingsScreen extends ConsumerWidget {
     final prefs = ref.watch(preferencesProvider);
     final library = ref.watch(libraryProvider).value;
     final deviceId = prefs.getDeviceId();
+    final account = ref.watch(accountProvider).value;
+    final isGuest = account == null || account.isGuest;
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -125,10 +128,19 @@ class SettingsScreen extends ConsumerWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(loc.t('guest'), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                          Text(
+                            isGuest ? loc.t('guest') : account.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                          ),
                           const SizedBox(height: 2),
                           Text(
-                            'ID ${deviceId.substring(0, deviceId.length < 8 ? deviceId.length : 8).toUpperCase()}',
+                            isGuest
+                                ? 'ID ${deviceId.substring(0, deviceId.length < 8 ? deviceId.length : 8).toUpperCase()}'
+                                : (account.email ?? ''),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
                           ),
                         ],
@@ -144,6 +156,39 @@ class SettingsScreen extends ConsumerWidget {
                     _Stat(value: library?.history.length, label: loc.t('stats_watched')),
                   ],
                 ),
+                const SizedBox(height: 16),
+                if (isGuest)
+                  SizedBox(
+                    width: double.infinity,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(gradient: AppTheme.primaryGradient, borderRadius: BorderRadius.circular(22)),
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.transparent, shadowColor: Colors.transparent),
+                        icon: const Icon(Icons.login_rounded),
+                        label: Text(loc.t('login_or_register')),
+                        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuthScreen())),
+                      ),
+                    ),
+                  )
+                else
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.textSecondary,
+                        side: const BorderSide(color: AppTheme.border),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                      ),
+                      icon: const Icon(Icons.logout_rounded, size: 18),
+                      label: Text(loc.t('logout')),
+                      onPressed: () async {
+                        final messenger = ScaffoldMessenger.of(context);
+                        await ref.read(repositoryProvider).logout();
+                        refreshSession(ref);
+                        messenger.showSnackBar(SnackBar(content: Text(loc.t('logged_out'))));
+                      },
+                    ),
+                  ),
               ],
             ),
           ),

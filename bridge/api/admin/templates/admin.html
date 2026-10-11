@@ -43,6 +43,9 @@
             {% if sync_running %}
             <span class="badge text-bg-warning pulse" id="syncBadge"><i class="bi bi-arrow-repeat"></i> Sync en cours</span>
             {% endif %}
+            <a href="/admin/upload" class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"><i class="bi bi-cloud-arrow-up"></i> Téléverser</a>
+            <a href="/admin/users" class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"><i class="bi bi-people"></i> Utilisateurs</a>
+            <a href="/admin/app" class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"><i class="bi bi-phone"></i> Application</a>
             <span class="badge text-bg-secondary d-none d-sm-inline">v{{ version }}</span>
             <a href="/docs" target="_blank" class="btn btn-sm btn-outline-secondary d-none d-sm-inline-block"><i class="bi bi-code-slash"></i> API</a>
             <form method="post" action="/admin/logout" class="m-0">
@@ -280,6 +283,10 @@
 
         <!-- ============ Series ============ -->
         <div class="tab-pane fade" id="tab-series">
+            <div class="d-flex flex-wrap gap-2 mb-3">
+                <a href="/admin/series/new" class="btn btn-sm btn-brand"><i class="bi bi-plus-lg"></i> Nouvelle série</a>
+                <a href="/admin/upload" class="btn btn-sm btn-outline-light"><i class="bi bi-cloud-arrow-up"></i> Téléverser des épisodes</a>
+            </div>
             <div class="card p-3">
                 <form method="get" action="/admin" class="row g-2 align-items-center mb-3">
                     <input type="hidden" name="tab" value="series">
@@ -324,9 +331,9 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <div class="fw-semibold text-white">{{ s.title }}</div>
+                                    <a class="fw-semibold text-white text-decoration-none" href="/admin/series/{{ s.id }}">{{ s.title }}</a>
                                     <div class="small text-secondary">
-                                        #{{ s.id }} · src {{ s.source_id }}{% if s.platform %} · {{ s.platform }}{% endif %}
+                                        #{{ s.id }} · {{ s.source_type }}{% if s.platform %} · {{ s.platform }}{% endif %}
                                         {% if s.is_featured %}<span class="badge text-bg-warning ms-1">À la une</span>{% endif %}
                                         {% if s.is_popular %}<span class="badge text-bg-danger ms-1">Tendance</span>{% endif %}
                                         {% if s.is_new %}<span class="badge text-bg-success ms-1">Nouveau</span>{% endif %}
@@ -353,9 +360,9 @@
                                             <i class="bi bi-arrow-clockwise"></i>
                                         </button>
                                     </form>
-                                    <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#editModal{{ s.id }}" title="Éditer">
+                                    <a class="btn btn-sm btn-outline-light" href="/admin/series/{{ s.id }}" title="Éditer / épisodes">
                                         <i class="bi bi-pencil"></i>
-                                    </button>
+                                    </a>
                                 </td>
                             </tr>
                         {% else %}
@@ -382,62 +389,7 @@
                 {% endif %}
             </div>
 
-            {% for s in series_list %}
-            <div class="modal fade" id="editModal{{ s.id }}" tabindex="-1">
-                <div class="modal-dialog modal-lg modal-dialog-scrollable">
-                    <div class="modal-content">
-                        <form method="post" action="/admin/series/{{ s.id }}/edit">
-                            <div class="modal-header border-secondary border-opacity-25">
-                                <h5 class="modal-title">Éditer « {{ s.title }} »</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                            </div>
-                            <div class="modal-body">
-                                <div class="row g-3">
-                                    <div class="col-12">
-                                        <label class="form-label small text-secondary">Titre principal (EN)</label>
-                                        <input type="text" name="title" class="form-control" value="{{ s.title }}" required>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label small text-secondary">Titre FR</label>
-                                        <input type="text" name="title_fr" class="form-control" value="{{ (s.titles_json or {}).get('fr', '') }}">
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label small text-secondary">Titre AR</label>
-                                        <input type="text" name="title_ar" class="form-control" dir="rtl" value="{{ (s.titles_json or {}).get('ar', '') }}">
-                                    </div>
-                                    <div class="col-12">
-                                        <label class="form-label small text-secondary">Description (EN)</label>
-                                        <textarea name="description" rows="4" class="form-control">{{ s.description }}</textarea>
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label small text-secondary">Plateforme</label>
-                                        <input type="text" name="platform" class="form-control" value="{{ s.platform }}">
-                                    </div>
-                                    <div class="col-md-6">
-                                        <label class="form-label small text-secondary">Note (0–5)</label>
-                                        <input type="number" step="0.1" min="0" max="5" name="rating" class="form-control" value="{{ s.rating }}">
-                                    </div>
-                                    <div class="col-12 d-flex gap-4">
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" name="is_popular" value="true" id="pop{{ s.id }}" {{ 'checked' if s.is_popular }}>
-                                            <label class="form-check-label" for="pop{{ s.id }}">Tendance (badge HOT)</label>
-                                        </div>
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" name="is_new" value="true" id="new{{ s.id }}" {{ 'checked' if s.is_new }}>
-                                            <label class="form-check-label" for="new{{ s.id }}">Nouveauté (badge NEW)</label>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="modal-footer border-secondary border-opacity-25">
-                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuler</button>
-                                <button type="submit" class="btn btn-brand">Enregistrer</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
+
         </div>
 
         <!-- ============ Banners ============ -->

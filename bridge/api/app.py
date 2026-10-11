@@ -11,13 +11,16 @@ from bridge.database import SessionLocal, init_db
 from bridge.scheduler import scheduled_telegram_sync, start_scheduler, startup_sync_if_empty, stop_scheduler
 from bridge.sync import mark_interrupted_runs
 from bridge.telegram.client import telegram_service
+from bridge.uploads import cleanup_tmp_dir
 from bridge.streamer import stream_resolver
 from bridge.api.v1.routes_home import router as home_router
 from bridge.api.v1.routes_series import router as series_router
 from bridge.api.v1.routes_user import router as user_router
 from bridge.api.v1.routes_stream import router as stream_router
 from bridge.api.v1.routes_media import router as media_router
+from bridge.api.v1.routes_app import download_router, router as app_router
 from bridge.api.admin.routes_admin import router as admin_router
+from bridge.api.admin.routes_content import router as admin_content_router
 
 logger = logging.getLogger("bridge.app")
 
@@ -33,6 +36,8 @@ async def lifespan(app: FastAPI):
             logger.info(f"Marked {interrupted} interrupted sync run(s) as failed.")
     finally:
         db.close()
+
+    cleanup_tmp_dir()
 
     if not settings.admin_login_allowed:
         logger.warning("Admin panel is LOCKED: set a non-default ADMIN_PASSWORD environment variable to enable it.")
@@ -84,6 +89,8 @@ app.add_middleware(
 app.include_router(home_router, prefix="/api/v1")
 app.include_router(series_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
+app.include_router(app_router, prefix="/api/v1")
+app.include_router(download_router)
 
 # Mount Stream and Media endpoints
 app.include_router(stream_router)
@@ -91,6 +98,7 @@ app.include_router(media_router)
 
 # Mount Admin Web Panel
 app.include_router(admin_router)
+app.include_router(admin_content_router)
 
 @app.get("/", tags=["Health"], include_in_schema=False)
 async def root():

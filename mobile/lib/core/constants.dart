@@ -4,7 +4,7 @@ class AppConstants {
   static const String defaultBaseUrl = "http://2.29.96.137:8090";
 
   static const String appName = "DramaBiliki";
-  static const String appVersion = "1.2.0";
+  static const String appVersion = "1.3.0";
 
   // Paging
   static const int pageSize = 18;
@@ -19,4 +19,8 @@ class AppConstants {
   static const String keyAutoplayNext = "autoplay_next_episode";
   static const String keySubtitles = "subtitles_enabled";
   static const String keyRecentSearches = "recent_searches";
+  static const String keyAdsCounter = "ads_episode_counter";
+
+  // Google's public test ad unit, used until a real one is set in the admin panel.
+  static const String testRewardedUnitId = "ca-app-pub-3940256099942544/5224354917";
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/app_theme.dart';
 import '../core/localization.dart';
+import '../core/update_checker.dart';
 import '../providers/app_providers.dart';
 import 'foryou/for_you_screen.dart';
 import 'home/home_screen.dart';
@@ -20,6 +21,14 @@ class _MainNavScreenState extends ConsumerState<MainNavScreen> {
   static const _libraryTab = 2;
 
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) checkForAppUpdate(context, ref);
+    });
+  }
 
   void _select(int idx) {
     if (idx == _currentIndex) return;

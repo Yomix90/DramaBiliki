@@ -96,6 +96,8 @@ class Episode(Base):
     tg_message_id = Column(BigInteger, nullable=True, index=True)
     file_size = Column(BigInteger, default=0)
     mime_type = Column(String(64), default="")
+    # Video stored on the VPS disk (relative to MEDIA_DIR/videos), used instead of Telegram
+    local_file = Column(String(255), default="")
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -129,6 +131,8 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)
     platform_os = Column(String(32), default="android")  # android, ios, web
     preferred_language = Column(String(10), default="en")  # en, fr, ar
+    is_active = Column(Boolean, default=True)  # False = banned by an admin
+    ads_free = Column(Boolean, default=False)  # True = never shown rewarded ads
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_seen_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

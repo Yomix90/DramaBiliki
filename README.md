@@ -169,6 +169,28 @@ The account session is stored in the database (data volume): treat that volume a
 
 ---
 
+## 🗂️ Admin features
+
+- **Séries**: create/edit series with cover upload, FR/EN/AR titles & synopsis, genres,
+  rating, year, visibility; manage episodes (renumber, delete, preview).
+- **Téléverser** (`/admin/upload`): drag & drop many videos; files are sent in 8 MB chunks
+  (several in parallel, auto-retry). Series and episodes are detected from file names
+  (`Title - S01E03.ts`, `Title EP12.mp4`, `Title.S02E05.mkv` → "Title - S2", `الحلقة 7`).
+  `.ts/.mkv` are remuxed to MP4 with ffmpeg (no re-encoding), then stored either in a
+  Telegram channel (parallel MTProto upload) or on the VPS disk.
+- **Utilisateurs**: registered accounts and guests, ad-free flag, ban, delete.
+- **Application**: publish a new APK (in-app update prompt, optional forced update,
+  minimum version) and configure AdMob rewarded ads (one ad every N episodes).
+
+### Mobile app accounts, updates and ads
+- Users can sign up / log in (Profile tab); a guest who signs up keeps its list and history.
+- At launch the app calls `/api/v1/app/version` and offers the APK published in the admin.
+- Rewarded ads use Google's **test** ids until you configure yours: set the rewarded ad unit
+  id in **Admin → Application**, and build the APK with your AdMob *app* id:
+  `flutter build apk --release -PADMOB_APP_ID=ca-app-pub-XXXXXXXX~YYYYYYYY`.
+
+---
+
 ## 🌐 Part 3: VPS Deployment with Dokploy (recommended)
 
 The repository ships a production `Dockerfile` (healthcheck, persistent volumes) and a Dokploy-compatible `docker-compose.yml`. Dokploy builds it from GitHub and
