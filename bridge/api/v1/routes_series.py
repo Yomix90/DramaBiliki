@@ -7,11 +7,12 @@ from bridge.database import get_db
 from bridge.models import Series, Episode, Genre, Favorite, WatchHistory, User
 from bridge.auth import get_optional_user
 from bridge.api.v1.schemas import SeriesBriefOut, SeriesDetailOut, EpisodeOut, GenreOut
+from bridge.urls import public_base_url, series_cover_url
 
 router = APIRouter(tags=["Series"])
 
 def serialize_brief(s: Series, lang: str, base_url: str) -> SeriesBriefOut:
-    cover = f"{base_url}/media/covers/{s.local_cover}" if s.local_cover else s.cover_url
+    cover = series_cover_url(s, base_url)
     return SeriesBriefOut(
         id=s.id,
         source_id=s.source_id,
@@ -38,7 +39,7 @@ async def list_series(
     lang: str = Query("en"),
     db: Session = Depends(get_db),
 ):
-    base_url = str(request.base_url).rstrip("/")
+    base_url = public_base_url(request)
     query = db.query(Series).filter(Series.status == "active")
 
     if genre:
@@ -70,7 +71,7 @@ async def get_series_detail(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
-    base_url = str(request.base_url).rstrip("/")
+    base_url = public_base_url(request)
     
     if id_or_slug.isdigit():
         series = db.query(Series).filter((Series.id == int(id_or_slug)) | (Series.source_id == id_or_slug)).first()
@@ -111,7 +112,7 @@ async def get_series_detail(
             watched_seconds=w_sec,
         ))
 
-    cover = f"{base_url}/media/covers/{series.local_cover}" if series.local_cover else series.cover_url
+    cover = series_cover_url(series, base_url)
 
     return SeriesDetailOut(
         id=series.id,

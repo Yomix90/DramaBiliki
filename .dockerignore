@@ -1,0 +1,22 @@
+# Keep the Docker build context small: only the bridge is needed in the image.
+.git
+.github
+.claude
+mobile
+docs
+tests
+media
+*.md
+*.db
+*.sqlite3
+.env
+.env.*
+!.env.example
+venv
+env
+.venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+cookies.txt

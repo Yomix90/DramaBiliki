@@ -3,297 +3,421 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DramaBiliki Bridge — Panneau d'Administration</title>
-    <!-- Bootstrap 5 CSS -->
+    <meta name="robots" content="noindex, nofollow">
+    <title>DramaBiliki Bridge Admin</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
-        body { background-color: #0d0f12; color: #e1e7ec; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 10px; }
-        .table { color: #c9d1d9; border-color: #30363d; }
-        .table-dark { --bs-table-bg: #161b22; }
-        .nav-tabs .nav-link { color: #8b949e; border-color: transparent; }
-        .nav-tabs .nav-link.active { background-color: #161b22; color: #58a6ff; border-color: #30363d #30363d transparent; font-weight: 600; }
-        .badge-active { background-color: #238636; }
-        .badge-inactive { background-color: #da3633; }
-        .cover-thumb { width: 50px; height: 75px; object-fit: cover; border-radius: 4px; }
-        .stat-card { border-left: 4px solid #58a6ff; }
+        :root { --brand: #ff2e55; --brand2: #ff7a45; --bg: #07080a; --surface: #121418; --border: #24272e; --muted: #8b919c; }
+        body { background: var(--bg); color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .navbar { background: rgba(7, 8, 10, .92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+        .brand-icon { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, var(--brand), var(--brand2)); display: inline-flex; align-items: center; justify-content: center; }
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+        .stat-card .value { font-size: 1.7rem; font-weight: 800; color: #fff; line-height: 1.1; }
+        .stat-card .label { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+        .stat-card .icon { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
+        .table { --bs-table-bg: transparent; color: #d4d8de; border-color: var(--border); margin-bottom: 0; }
+        .table thead th { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; border-bottom-color: var(--border); }
+        .nav-pills .nav-link { color: var(--muted); border-radius: 10px; font-weight: 600; }
+        .nav-pills .nav-link.active { background: linear-gradient(90deg, var(--brand), var(--brand2)); color: #fff; }
+        .cover-thumb { width: 42px; height: 56px; object-fit: cover; border-radius: 6px; background: #1d2026; }
+        .btn-brand { background: linear-gradient(90deg, var(--brand), var(--brand2)); border: 0; color: #fff; font-weight: 600; }
+        .btn-brand:hover { filter: brightness(1.08); color: #fff; }
+        .form-control, .form-select { background-color: #1d2026; border-color: #2a2e36; }
+        .modal-content { background: var(--surface); border: 1px solid var(--border); }
+        .log-box { background: #0b0c0f; border: 1px solid var(--border); border-radius: 8px; font-size: .78rem; white-space: pre-wrap; max-height: 160px; overflow: auto; }
+        .pulse { animation: pulse 1.4s ease-in-out infinite; }
+        @keyframes pulse { 50% { opacity: .45; } }
+        code { color: #ff8aa0; }
     </style>
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary border-opacity-25 px-4 mb-4">
-    <div class="container-fluid">
-        <a class="navbar-brand fw-bold text-danger d-flex align-items-center gap-2" href="/admin">
-            <i class="bi bi-play-circle-fill"></i> DramaBiliki Bridge Admin
+<nav class="navbar sticky-top px-3 px-md-4 mb-4">
+    <div class="container-fluid px-0">
+        <a class="navbar-brand fw-bold d-flex align-items-center gap-2 text-white" href="/admin">
+            <span class="brand-icon"><i class="bi bi-play-fill text-white"></i></span>
+            <span>DramaBiliki <span class="text-secondary fw-normal">Bridge Admin</span></span>
         </a>
-        <div class="d-flex align-items-center gap-3">
-            <span class="badge bg-secondary">v1.0.0</span>
-            <a href="/docs" target="_blank" class="btn btn-sm btn-outline-info"><i class="bi bi-code-slash"></i> API Docs</a>
+        <div class="d-flex align-items-center gap-2">
+            {% if sync_running %}
+            <span class="badge text-bg-warning pulse" id="syncBadge"><i class="bi bi-arrow-repeat"></i> Sync en cours</span>
+            {% endif %}
+            <span class="badge text-bg-secondary d-none d-sm-inline">v{{ version }}</span>
+            <a href="/docs" target="_blank" class="btn btn-sm btn-outline-secondary d-none d-sm-inline-block"><i class="bi bi-code-slash"></i> API</a>
+            <form method="post" action="/admin/logout" class="m-0">
+                <button class="btn btn-sm btn-outline-light" title="Déconnexion ({{ admin }})"><i class="bi bi-box-arrow-right"></i></button>
+            </form>
         </div>
     </div>
 </nav>
 
-<div class="container-fluid px-4 pb-5">
+<div class="container-fluid px-3 px-md-4 pb-5">
+    {% for w in warnings %}
+    <div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle"></i> {{ w }}</div>
+    {% endfor %}
+
     {% if message %}
-    <div class="alert alert-success alert-dismissible fade show" role="alert">
+    <div class="alert alert-{{ level }} alert-dismissible fade show py-2" role="alert">
         {{ message }}
         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
     </div>
     {% endif %}
 
-    <!-- Top Stats -->
+    <!-- Stats -->
     <div class="row g-3 mb-4">
-        <div class="col-md-3">
-            <div class="card stat-card p-3 shadow-sm">
-                <div class="text-secondary small text-uppercase fw-semibold">Séries en base</div>
-                <div class="fs-2 fw-bold text-white">{{ stats.series_count }}</div>
-                <div class="text-success small"><i class="bi bi-check-circle"></i> {{ stats.active_series_count }} actives</div>
+        {% set cards = [
+            ('Séries', stats.series_count, stats.active_series_count ~ ' actives', 'bi-film', '#ff2e55'),
+            ('Épisodes', stats.episodes_count, 'format vertical', 'bi-collection-play', '#a371f7'),
+            ('Appareils', stats.users_count, 'utilisateurs', 'bi-phone', '#3fb950'),
+            ('Favoris', stats.favorites_count, 'dans « Ma liste »', 'bi-heart', '#ff7a45'),
+            ('Progressions', stats.views_count, 'épisodes suivis', 'bi-graph-up', '#58a6ff'),
+            ('Dernière sync', stats.last_sync_status, stats.last_sync_time, 'bi-arrow-repeat', '#f0c040'),
+        ] %}
+        {% for label, value, sub, icon, color in cards %}
+        <div class="col-6 col-md-4 col-xl-2">
+            <div class="card stat-card p-3 h-100">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div class="label">{{ label }}</div>
+                    <div class="icon" style="background: {{ color }}22; color: {{ color }}"><i class="bi {{ icon }}"></i></div>
+                </div>
+                <div class="value">{{ value }}</div>
+                <div class="text-secondary small">{{ sub }}</div>
             </div>
         </div>
-        <div class="col-md-3">
-            <div class="card stat-card p-3 shadow-sm" style="border-left-color: #a371f7;">
-                <div class="text-secondary small text-uppercase fw-semibold">Total Épisodes</div>
-                <div class="fs-2 fw-bold text-white">{{ stats.episodes_count }}</div>
-                <div class="text-secondary small">Format vertical court</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card stat-card p-3 shadow-sm" style="border-left-color: #3fb950;">
-                <div class="text-secondary small text-uppercase fw-semibold">Utilisateurs / Appareils</div>
-                <div class="fs-2 fw-bold text-white">{{ stats.users_count }}</div>
-                <div class="text-secondary small">Appareils enregistrés</div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card stat-card p-3 shadow-sm" style="border-left-color: #f0883e;">
-                <div class="text-secondary small text-uppercase fw-semibold">Dernière Synchronisation</div>
-                <div class="fs-5 fw-bold text-white mt-1">{{ stats.last_sync_status }}</div>
-                <div class="text-secondary small">{{ stats.last_sync_time }}</div>
-            </div>
-        </div>
+        {% endfor %}
     </div>
 
-    <!-- Navigation Tabs -->
-    <ul class="nav nav-tabs mb-4" id="adminTabs" role="tablist">
-        <li class="nav-item">
-            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-series"><i class="bi bi-film"></i> Gestion des Séries</button>
-        </li>
-        <li class="nav-item">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-banners"><i class="bi bi-images"></i> Bannières Accueil</button>
-        </li>
-        <li class="nav-item">
-            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-sync"><i class="bi bi-arrow-repeat"></i> Scanner & Synchronisations</button>
-        </li>
+    <!-- Tabs -->
+    <ul class="nav nav-pills gap-2 mb-3 flex-nowrap overflow-auto" role="tablist">
+        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-series" data-tab="series"><i class="bi bi-film"></i> Séries</button></li>
+        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-banners" data-tab="banners"><i class="bi bi-images"></i> Bannières</button></li>
+        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-sync" data-tab="sync"><i class="bi bi-arrow-repeat"></i> Synchronisation</button></li>
+        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-config" data-tab="config"><i class="bi bi-gear"></i> Configuration</button></li>
     </ul>
 
-    <div class="tab-content" id="adminTabsContent">
-        <!-- Series Tab -->
-        <div class="tab-pane fade show active" id="tab-series">
-            <div class="card p-3 shadow-sm mb-4">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="fw-bold mb-0">Catalogue des Séries</h5>
-                    <form method="get" action="/admin" class="d-flex gap-2">
-                        <input type="text" name="q" value="{{ search_query }}" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="Rechercher par titre...">
-                        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
-                    </form>
-                </div>
+    <div class="tab-content">
+        <!-- ============ Series ============ -->
+        <div class="tab-pane fade" id="tab-series">
+            <div class="card p-3">
+                <form method="get" action="/admin" class="row g-2 align-items-center mb-3">
+                    <input type="hidden" name="tab" value="series">
+                    <div class="col-12 col-md">
+                        <input type="search" name="q" value="{{ search_query }}" class="form-control form-control-sm" placeholder="Titre, slug ou ID source…">
+                    </div>
+                    <div class="col-8 col-md-auto">
+                        <select name="status_filter" class="form-select form-select-sm">
+                            <option value="" {{ 'selected' if not status_filter }}>Toutes</option>
+                            <option value="active" {{ 'selected' if status_filter == 'active' }}>Visibles</option>
+                            <option value="inactive" {{ 'selected' if status_filter == 'inactive' }}>Masquées</option>
+                            <option value="featured" {{ 'selected' if status_filter == 'featured' }}>À la une</option>
+                        </select>
+                    </div>
+                    <div class="col-4 col-md-auto">
+                        <button type="submit" class="btn btn-sm btn-brand w-100"><i class="bi bi-search"></i> Filtrer</button>
+                    </div>
+                </form>
+
                 <div class="table-responsive">
-                    <table class="table table-dark table-hover align-middle">
+                    <table class="table table-hover align-middle">
                         <thead>
-                            <tr class="text-secondary small">
-                                <th>Cover</th>
-                                <th>Titre & Plateforme</th>
-                                <th>Épisodes</th>
-                                <th>À la une</th>
+                            <tr>
+                                <th></th>
+                                <th>Série</th>
+                                <th class="d-none d-md-table-cell">Épisodes</th>
+                                <th class="d-none d-md-table-cell">Note</th>
                                 <th>Statut</th>
                                 <th class="text-end">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for s in series_list %}
+                        {% for s in series_list %}
                             <tr>
-                                <td>
+                                <td style="width: 54px">
                                     {% if s.local_cover %}
-                                    <img src="/media/covers/{{ s.local_cover }}" class="cover-thumb">
+                                    <img src="/media/covers/{{ s.local_cover }}?w=300" class="cover-thumb" loading="lazy" alt="">
                                     {% elif s.cover_url %}
-                                    <img src="{{ s.cover_url }}" class="cover-thumb">
+                                    <img src="{{ s.cover_url }}" class="cover-thumb" loading="lazy" alt="">
                                     {% else %}
-                                    <div class="cover-thumb bg-secondary d-flex align-items-center justify-content-center"><i class="bi bi-image"></i></div>
+                                    <div class="cover-thumb d-flex align-items-center justify-content-center"><i class="bi bi-image text-secondary"></i></div>
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <div class="fw-bold text-white">{{ s.title }}</div>
-                                    <span class="badge bg-secondary small">{{ s.platform or "Short Drama" }}</span>
-                                    <span class="text-secondary small ms-2">ID: {{ s.source_id }}</span>
+                                    <div class="fw-semibold text-white">{{ s.title }}</div>
+                                    <div class="small text-secondary">
+                                        #{{ s.id }} · src {{ s.source_id }}{% if s.platform %} · {{ s.platform }}{% endif %}
+                                        {% if s.is_featured %}<span class="badge text-bg-warning ms-1">À la une</span>{% endif %}
+                                        {% if s.is_popular %}<span class="badge text-bg-danger ms-1">Tendance</span>{% endif %}
+                                        {% if s.is_new %}<span class="badge text-bg-success ms-1">Nouveau</span>{% endif %}
+                                    </div>
                                 </td>
+                                <td class="d-none d-md-table-cell"><span class="fw-semibold">{{ s.available_episodes }}</span><span class="text-secondary"> / {{ s.total_episodes }}</span></td>
+                                <td class="d-none d-md-table-cell"><i class="bi bi-star-fill text-warning small"></i> {{ '%.1f'|format(s.rating or 0) }}</td>
                                 <td>
-                                    <span class="badge bg-info text-dark">{{ s.available_episodes }} dispo</span> / {{ s.total_episodes }}
+                                    <form method="post" action="/admin/series/{{ s.id }}/toggle-status" class="d-inline">
+                                        <button class="btn btn-sm {{ 'btn-outline-success' if s.status == 'active' else 'btn-outline-danger' }}" title="Basculer la visibilité">
+                                            <i class="bi bi-{{ 'eye' if s.status == 'active' else 'eye-slash' }}"></i>
+                                            <span class="d-none d-lg-inline">{{ 'Visible' if s.status == 'active' else 'Masquée' }}</span>
+                                        </button>
+                                    </form>
                                 </td>
-                                <td>
+                                <td class="text-end text-nowrap">
                                     <form method="post" action="/admin/series/{{ s.id }}/toggle-featured" class="d-inline">
-                                        <button class="btn btn-sm {{ 'btn-warning' if s.is_featured else 'btn-outline-secondary' }}">
+                                        <button class="btn btn-sm {{ 'btn-warning' if s.is_featured else 'btn-outline-secondary' }}" title="À la une">
                                             <i class="bi bi-star{{ '-fill' if s.is_featured else '' }}"></i>
                                         </button>
                                     </form>
-                                </td>
-                                <td>
-                                    <form method="post" action="/admin/series/{{ s.id }}/toggle-status" class="d-inline">
-                                        <button class="btn btn-sm {{ 'btn-success' if s.status == 'active' else 'btn-danger' }}">
-                                            {{ 'Actif' if s.status == 'active' else 'Masqué' }}
+                                    <form method="post" action="/admin/series/{{ s.id }}/resync" class="d-inline">
+                                        <button class="btn btn-sm btn-outline-secondary" title="Resynchroniser depuis la source" {{ 'disabled' if sync_running }}>
+                                            <i class="bi bi-arrow-clockwise"></i>
                                         </button>
                                     </form>
-                                </td>
-                                <td class="text-end">
-                                    <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#editModal{{ s.id }}">
-                                        <i class="bi bi-pencil"></i> Éditer
+                                    <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#editModal{{ s.id }}" title="Éditer">
+                                        <i class="bi bi-pencil"></i>
                                     </button>
                                 </td>
                             </tr>
+                        {% else %}
+                            <tr><td colspan="6" class="text-center text-secondary py-5">
+                                Aucune série. Lancez une synchronisation depuis l'onglet <strong>Synchronisation</strong>.
+                            </td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
 
-                            <!-- Edit Modal -->
-                            <div class="modal fade" id="editModal{{ s.id }}" tabindex="-1">
-                                <div class="modal-dialog">
-                                    <div class="modal-content bg-dark text-white border-secondary">
-                                        <form method="post" action="/admin/series/{{ s.id }}/edit">
-                                            <div class="modal-header border-secondary">
-                                                <h5 class="modal-title">Éditer: {{ s.title }}</h5>
-                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                                            </div>
-                                            <div class="modal-body">
-                                                <div class="mb-3">
-                                                    <label class="form-label">Titre Principal</label>
-                                                    <input type="text" name="title" class="form-control bg-black text-white border-secondary" value="{{ s.title }}">
-                                                </div>
-                                                <div class="mb-3">
-                                                    <label class="form-label">Description</label>
-                                                    <textarea name="description" rows="4" class="form-control bg-black text-white border-secondary">{{ s.description }}</textarea>
-                                                </div>
-                                                <div class="form-check form-switch mb-2">
-                                                    <input class="form-check-input" type="checkbox" name="is_popular" value="true" {{ 'checked' if s.is_popular else '' }}>
-                                                    <label class="form-check-label">Marquer comme Tendance (Trending)</label>
-                                                </div>
-                                                <div class="form-check form-switch">
-                                                    <input class="form-check-input" type="checkbox" name="is_new" value="true" {{ 'checked' if s.is_new else '' }}>
-                                                    <label class="form-check-label">Marquer comme Nouveauté</label>
-                                                </div>
-                                            </div>
-                                            <div class="modal-footer border-secondary">
-                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                                                <button type="submit" class="btn btn-primary">Enregistrer</button>
-                                            </div>
-                                        </form>
+                {% if pages > 1 %}
+                <nav class="d-flex justify-content-between align-items-center mt-3">
+                    <span class="small text-secondary">{{ total }} séries · page {{ page }}/{{ pages }}</span>
+                    <ul class="pagination pagination-sm mb-0">
+                        {% set base = '/admin?tab=series&q=' ~ (search_query|urlencode) ~ '&status_filter=' ~ status_filter %}
+                        <li class="page-item {{ 'disabled' if page <= 1 }}"><a class="page-link" href="{{ base }}&page={{ page - 1 }}">‹</a></li>
+                        {% for p in range([1, page - 2]|max, [pages, page + 2]|min + 1) %}
+                        <li class="page-item {{ 'active' if p == page }}"><a class="page-link" href="{{ base }}&page={{ p }}">{{ p }}</a></li>
+                        {% endfor %}
+                        <li class="page-item {{ 'disabled' if page >= pages }}"><a class="page-link" href="{{ base }}&page={{ page + 1 }}">›</a></li>
+                    </ul>
+                </nav>
+                {% endif %}
+            </div>
+
+            {% for s in series_list %}
+            <div class="modal fade" id="editModal{{ s.id }}" tabindex="-1">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <form method="post" action="/admin/series/{{ s.id }}/edit">
+                            <div class="modal-header border-secondary border-opacity-25">
+                                <h5 class="modal-title">Éditer « {{ s.title }} »</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-3">
+                                    <div class="col-12">
+                                        <label class="form-label small text-secondary">Titre principal (EN)</label>
+                                        <input type="text" name="title" class="form-control" value="{{ s.title }}" required>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-secondary">Titre FR</label>
+                                        <input type="text" name="title_fr" class="form-control" value="{{ (s.titles_json or {}).get('fr', '') }}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-secondary">Titre AR</label>
+                                        <input type="text" name="title_ar" class="form-control" dir="rtl" value="{{ (s.titles_json or {}).get('ar', '') }}">
+                                    </div>
+                                    <div class="col-12">
+                                        <label class="form-label small text-secondary">Description (EN)</label>
+                                        <textarea name="description" rows="4" class="form-control">{{ s.description }}</textarea>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-secondary">Plateforme</label>
+                                        <input type="text" name="platform" class="form-control" value="{{ s.platform }}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-secondary">Note (0–5)</label>
+                                        <input type="number" step="0.1" min="0" max="5" name="rating" class="form-control" value="{{ s.rating }}">
+                                    </div>
+                                    <div class="col-12 d-flex gap-4">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" name="is_popular" value="true" id="pop{{ s.id }}" {{ 'checked' if s.is_popular }}>
+                                            <label class="form-check-label" for="pop{{ s.id }}">Tendance (badge HOT)</label>
+                                        </div>
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" name="is_new" value="true" id="new{{ s.id }}" {{ 'checked' if s.is_new }}>
+                                            <label class="form-check-label" for="new{{ s.id }}">Nouveauté (badge NEW)</label>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                            <div class="modal-footer border-secondary border-opacity-25">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Annuler</button>
+                                <button type="submit" class="btn btn-brand">Enregistrer</button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             </div>
+            {% endfor %}
         </div>
 
-        <!-- Banners Tab -->
+        <!-- ============ Banners ============ -->
         <div class="tab-pane fade" id="tab-banners">
-            <div class="card p-3 shadow-sm mb-4">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h5 class="fw-bold mb-0">Bannières de l'Application</h5>
-                    <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#newBannerModal">
-                        <i class="bi bi-plus-lg"></i> Ajouter une bannière
-                    </button>
+            <div class="row g-3">
+                <div class="col-lg-4">
+                    <div class="card p-3">
+                        <h6 class="fw-bold mb-3"><i class="bi bi-plus-circle"></i> Nouvelle bannière</h6>
+                        <form method="post" action="/admin/banners/create">
+                            <div class="mb-2">
+                                <label class="form-label small text-secondary">Titre</label>
+                                <input type="text" name="title" class="form-control form-control-sm" required>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small text-secondary">Étiquette (ex. EXCLUSIF)</label>
+                                <input type="text" name="subtitle" class="form-control form-control-sm">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small text-secondary">ID de la série cible (#id dans l'onglet Séries)</label>
+                                <input type="number" name="target_series_id" class="form-control form-control-sm" min="1">
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small text-secondary">URL de l'image <span class="text-secondary">(vide = couverture de la série)</span></label>
+                                <input type="url" name="image_url" class="form-control form-control-sm" placeholder="https://…">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small text-secondary">Ordre d'affichage</label>
+                                <input type="number" name="sort_order" class="form-control form-control-sm" value="0">
+                            </div>
+                            <button type="submit" class="btn btn-sm btn-brand w-100">Créer la bannière</button>
+                        </form>
+                    </div>
                 </div>
-
-                <div class="table-responsive">
-                    <table class="table table-dark table-hover align-middle">
-                        <thead>
-                            <tr class="text-secondary small">
-                                <th>Image</th>
-                                <th>Titre & Sous-titre</th>
-                                <th>Cible Série</th>
-                                <th>Ordre</th>
-                                <th>Statut</th>
-                                <th class="text-end">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for b in banners %}
-                            <tr>
-                                <td><img src="{{ b.image_url }}" style="width: 120px; height: 60px; object-fit: cover; border-radius: 4px;"></td>
-                                <td>
-                                    <div class="fw-bold text-white">{{ b.title }}</div>
-                                    <div class="text-secondary small">{{ b.subtitle }}</div>
-                                </td>
-                                <td>{{ b.series.title if b.series else "Aucune" }}</td>
-                                <td>{{ b.sort_order }}</td>
-                                <td>
-                                    <span class="badge {{ 'bg-success' if b.is_active else 'bg-secondary' }}">
-                                        {{ 'Active' if b.is_active else 'Inactive' }}
-                                    </span>
-                                </td>
-                                <td class="text-end">
-                                    <form method="post" action="/admin/banners/{{ b.id }}/delete" class="d-inline">
-                                        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Supprimer cette bannière ?')">
-                                            <i class="bi bi-trash"></i>
-                                        </button>
-                                    </form>
-                                </td>
-                            </tr>
-                            {% else %}
-                            <tr><td colspan="6" class="text-center text-secondary py-4">Aucune bannière configurée. L'application génère automatiquement les bannières à partir des séries à la une.</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                <div class="col-lg-8">
+                    <div class="card p-3">
+                        <h6 class="fw-bold mb-3">Bannières de l'accueil</h6>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead><tr><th>Image</th><th>Titre</th><th>Série</th><th>Ordre</th><th class="text-end">Actions</th></tr></thead>
+                                <tbody>
+                                {% for b in banners %}
+                                    <tr class="{{ '' if b.is_active else 'opacity-50' }}">
+                                        <td><img src="{{ b.image_url }}" style="width: 96px; height: 54px; object-fit: cover; border-radius: 6px;" loading="lazy" alt=""></td>
+                                        <td>
+                                            <div class="fw-semibold text-white">{{ b.title }}</div>
+                                            {% if b.subtitle %}<span class="badge text-bg-danger">{{ b.subtitle }}</span>{% endif %}
+                                        </td>
+                                        <td class="small">{{ b.series.title if b.series else '—' }}</td>
+                                        <td>{{ b.sort_order }}</td>
+                                        <td class="text-end text-nowrap">
+                                            <form method="post" action="/admin/banners/{{ b.id }}/toggle" class="d-inline">
+                                                <button class="btn btn-sm {{ 'btn-outline-success' if b.is_active else 'btn-outline-secondary' }}" title="Activer / désactiver">
+                                                    <i class="bi bi-{{ 'toggle-on' if b.is_active else 'toggle-off' }}"></i>
+                                                </button>
+                                            </form>
+                                            <form method="post" action="/admin/banners/{{ b.id }}/delete" class="d-inline" onsubmit="return confirm('Supprimer cette bannière ?')">
+                                                <button class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="bi bi-trash"></i></button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                {% else %}
+                                    <tr><td colspan="5" class="text-center text-secondary py-4">
+                                        Aucune bannière : l'application affiche automatiquement les 3 séries les mieux notées.
+                                    </td></tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Sync Tab -->
+        <!-- ============ Sync ============ -->
         <div class="tab-pane fade" id="tab-sync">
-            <div class="card p-3 shadow-sm mb-4">
-                <h5 class="fw-bold mb-3">Actions de Synchronisation</h5>
-                <div class="d-flex gap-3 mb-4">
-                    <form method="post" action="/admin/sync/trigger">
-                        <input type="hidden" name="sync_type" value="light">
-                        <button type="submit" class="btn btn-primary d-flex align-items-center gap-2">
-                            <i class="bi bi-lightning-charge"></i> Lancer Sync Légère (Nouveaux épisodes)
-                        </button>
-                    </form>
-                    <form method="post" action="/admin/sync/trigger">
-                        <input type="hidden" name="sync_type" value="full">
-                        <button type="submit" class="btn btn-outline-light d-flex align-items-center gap-2">
-                            <i class="bi bi-arrow-repeat"></i> Lancer Sync Complète (Catalogue)
-                        </button>
-                    </form>
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <div class="card p-3 h-100">
+                        <h6 class="fw-bold"><i class="bi bi-lightning-charge text-warning"></i> Sync légère</h6>
+                        <p class="small text-secondary">Premières pages du catalogue : nouveaux épisodes et nouvelles séries. Automatique toutes les {{ settings.LIGHT_SYNC_INTERVAL_MINUTES }} min.</p>
+                        <form method="post" action="/admin/sync/trigger" class="mt-auto">
+                            <input type="hidden" name="sync_type" value="light">
+                            <button class="btn btn-sm btn-brand w-100" {{ 'disabled' if sync_running }}>Lancer</button>
+                        </form>
+                    </div>
                 </div>
+                <div class="col-md-4">
+                    <div class="card p-3 h-100">
+                        <h6 class="fw-bold"><i class="bi bi-arrow-repeat text-info"></i> Sync complète</h6>
+                        <p class="small text-secondary">Parcourt tout le catalogue (plus long). Automatique chaque jour à {{ settings.FULL_SYNC_HOUR_UTC }}h UTC.</p>
+                        <form method="post" action="/admin/sync/trigger" class="mt-auto">
+                            <input type="hidden" name="sync_type" value="full">
+                            <button class="btn btn-sm btn-outline-light w-100" {{ 'disabled' if sync_running }}>Lancer</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card p-3 h-100">
+                        <h6 class="fw-bold"><i class="bi bi-bullseye text-danger"></i> Une série précise</h6>
+                        <p class="small text-secondary">Slug ou URL de la série sur la source.</p>
+                        <form method="post" action="/admin/sync/trigger" class="mt-auto d-flex gap-2">
+                            <input type="hidden" name="sync_type" value="single">
+                            <input type="text" name="slug" class="form-control form-control-sm" placeholder="mon-drama-slug" required>
+                            <button class="btn btn-sm btn-outline-light" {{ 'disabled' if sync_running }}>OK</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
 
-                <h6 class="fw-bold text-secondary text-uppercase small mb-3">Historique des Synchronisations</h6>
+            <div class="card p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold mb-0">Historique</h6>
+                    {% if sync_running %}<span class="small text-warning pulse" id="syncLive">Actualisation automatique…</span>{% endif %}
+                </div>
                 <div class="table-responsive">
-                    <table class="table table-dark table-hover align-middle">
-                        <thead>
-                            <tr class="text-secondary small">
-                                <th>Date Début</th>
-                                <th>Type</th>
-                                <th>Statut</th>
-                                <th>Séries Traitées</th>
-                                <th>Épisodes</th>
-                                <th>Erreurs</th>
-                            </tr>
-                        </thead>
+                    <table class="table table-hover align-middle">
+                        <thead><tr><th>Début</th><th>Type</th><th>Statut</th><th>Durée</th><th>Séries</th><th>Épisodes</th><th>Erreurs</th></tr></thead>
                         <tbody>
-                            {% for run in sync_runs %}
+                        {% for run in sync_runs %}
                             <tr>
-                                <td>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') if run.started_at else '-' }}</td>
-                                <td><span class="badge bg-secondary">{{ run.sync_type }}</span></td>
+                                <td class="small text-nowrap">{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') if run.started_at else '-' }}</td>
+                                <td><span class="badge text-bg-secondary">{{ run.sync_type }}{% if run.target_slug %} · {{ run.target_slug }}{% endif %}</span></td>
                                 <td>
-                                    <span class="badge {{ 'bg-success' if run.status == 'completed' else 'bg-warning text-dark' if run.status == 'running' else 'bg-danger' }}">
-                                        {{ run.status }}
-                                    </span>
+                                    <span class="badge {{ 'text-bg-success' if run.status == 'completed' else 'text-bg-warning pulse' if run.status == 'running' else 'text-bg-danger' }}">{{ run.status }}</span>
                                 </td>
-                                <td>{{ run.series_discovered }}</td>
+                                <td class="small text-secondary">
+                                    {% if run.finished_at and run.started_at %}{{ ((run.finished_at - run.started_at).total_seconds() // 1)|int }} s{% else %}—{% endif %}
+                                </td>
+                                <td>{{ run.series_discovered }} <span class="text-secondary small">(+{{ run.series_updated }} à jour)</span></td>
                                 <td>{{ run.episodes_synced }}</td>
-                                <td>{{ run.errors_count }}</td>
+                                <td class="{{ 'text-danger fw-bold' if run.errors_count else '' }}">{{ run.errors_count }}</td>
                             </tr>
-                            {% endfor %}
+                            {% if run.log_messages %}
+                            <tr><td colspan="7" class="pt-0"><div class="log-box p-2 text-secondary">{{ run.log_messages }}</div></td></tr>
+                            {% endif %}
+                        {% else %}
+                            <tr><td colspan="7" class="text-center text-secondary py-4">Aucune synchronisation pour le moment.</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ Config ============ -->
+        <div class="tab-pane fade" id="tab-config">
+            <div class="card p-3">
+                <h6 class="fw-bold mb-3">Configuration active <span class="text-secondary fw-normal small">(variables d'environnement, modifiables dans Dokploy)</span></h6>
+                <div class="table-responsive">
+                    <table class="table align-middle small">
+                        <tbody>
+                            <tr><th class="text-secondary">APP_ENV</th><td><code>{{ settings.APP_ENV }}</code></td></tr>
+                            <tr><th class="text-secondary">PUBLIC_BASE_URL</th><td><code>{{ settings.PUBLIC_BASE_URL or '(déduit de la requête)' }}</code> — URL à saisir dans l'app mobile (Profil → URL du serveur)</td></tr>
+                            <tr><th class="text-secondary">Base de données</th><td><code>{{ settings.DATABASE_URL.split('://')[0] }}</code></td></tr>
+                            <tr><th class="text-secondary">Source</th><td><code>{{ settings.SOURCE_BASE_URL }}</code></td></tr>
+                            <tr><th class="text-secondary">CDN principal / secours</th><td><code>{{ settings.SOURCE_CDN_PRIMARY }}</code> / <code>{{ settings.SOURCE_CDN_FAILOVER }}</code></td></tr>
+                            <tr><th class="text-secondary">Proxy des segments vidéo</th><td>{{ 'Activé' if settings.PROXY_SEGMENTS else 'Désactivé (les apps lisent le CDN directement)' }}</td></tr>
+                            <tr><th class="text-secondary">Planificateur</th><td>{{ 'Activé' if settings.ENABLE_SCHEDULER else 'Désactivé' }} — légère toutes les {{ settings.LIGHT_SYNC_INTERVAL_MINUTES }} min, complète à {{ settings.FULL_SYNC_HOUR_UTC }}h UTC</td></tr>
+                            <tr><th class="text-secondary">Cache des flux</th><td>{{ settings.STREAM_CACHE_TTL_SECONDS }} s</td></tr>
+                            <tr><th class="text-secondary">Scanner</th><td>{{ settings.SCANNER_MAX_CONCURRENT_REQUESTS }} requêtes simultanées, délai {{ settings.SCANNER_REQUEST_DELAY_MIN }}–{{ settings.SCANNER_REQUEST_DELAY_MAX }} s</td></tr>
+                            <tr><th class="text-secondary">Santé</th><td><a href="/health" target="_blank"><code>/health</code></a></td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -302,47 +426,39 @@
     </div>
 </div>
 
-<!-- Modal New Banner -->
-<div class="modal fade" id="newBannerModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content bg-dark text-white border-secondary">
-            <form method="post" action="/admin/banners/create">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title">Créer une Bannière</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Titre</label>
-                        <input type="text" name="title" class="form-control bg-black text-white border-secondary" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Sous-titre</label>
-                        <input type="text" name="subtitle" class="form-control bg-black text-white border-secondary">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">URL de l'image</label>
-                        <input type="url" name="image_url" class="form-control bg-black text-white border-secondary" placeholder="https://..." required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Associer à la Série (ID)</label>
-                        <input type="number" name="target_series_id" class="form-control bg-black text-white border-secondary">
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Ordre d'affichage</label>
-                        <input type="number" name="sort_order" class="form-control bg-black text-white border-secondary" value="0">
-                    </div>
-                </div>
-                <div class="modal-footer border-secondary">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="submit" class="btn btn-success">Créer la bannière</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- Bootstrap 5 JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Open the tab requested by the server (?tab=...) or the last one used.
+    (function () {
+        const params = new URLSearchParams(location.search);
+        let wanted = params.get('tab') || '{{ tab }}';
+        try { if (!params.get('tab')) wanted = localStorage.getItem('adminTab') || wanted; } catch (e) {}
+        const btn = document.querySelector(`[data-tab="${wanted}"]`) || document.querySelector('[data-tab="series"]');
+        bootstrap.Tab.getOrCreateInstance(btn).show();
+        document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('shown.bs.tab', () => {
+            try { localStorage.setItem('adminTab', b.dataset.tab); } catch (e) {}
+        }));
+    })();
+
+    // While a sync runs, poll its status and reload once it finishes.
+    {% if sync_running %}
+    (function poll() {
+        setTimeout(async () => {
+            try {
+                const res = await fetch('/admin/api/status', { credentials: 'same-origin' });
+                const data = await res.json();
+                if (!data.sync_running) {
+                    const url = new URL(location.href);
+                    url.searchParams.set('tab', 'sync');
+                    url.searchParams.delete('msg');
+                    location.href = url.toString();
+                    return;
+                }
+            } catch (e) {}
+            poll();
+        }, 4000);
+    })();
+    {% endif %}
+</script>
 </body>
 </html>

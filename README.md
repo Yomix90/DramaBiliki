@@ -106,7 +106,8 @@ uvicorn bridge.api.app:app --host 0.0.0.0 --port 8000 --reload
 ### Running Bridge Tests
 
 ```bash
-pytest tests -v
+pip install -r requirements-dev.txt
+pytest tests -v   # uses an isolated temporary database
 ```
 
 ---
@@ -148,80 +149,67 @@ flutter build apk --release
 
 ---
 
-## 🌐 Part 3: VPS Deployment (Systemd + Nginx + Certbot)
+## 🌐 Part 3: VPS Deployment with Dokploy (recommended)
 
-### 1. Systemd Service
+The repository ships a production `Dockerfile` (non-root user, healthcheck, persistent
+volumes) and a Dokploy-compatible `docker-compose.yml`. Dokploy builds it from GitHub and
+Traefik serves it over HTTPS.
 
-Create `/etc/systemd/system/dramabiliki.service`:
+### 1. Create the service
+1. In Dokploy: **Create Project → Create Service → Application**.
+2. **Provider**: GitHub → repository `Yomix90/DramaBiliki`, branch `main`.
+3. **Build Type**: `Dockerfile` (path `./Dockerfile`, context `.`).
+4. Enable **Autodeploy** so every push to `main` redeploys.
 
-```ini
-[Unit]
-Description=DramaBiliki Bridge Service
-After=network.target
+> Prefer Compose? Choose **Compose** instead, file `docker-compose.yml`: same variables and volumes.
 
-[Service]
-User=www-data
-Group=www-data
-WorkingDirectory=/var/www/DramaBiliki
-Environment="PATH=/var/www/DramaBiliki/venv/bin"
-ExecStart=/var/www/DramaBiliki/venv/bin/uvicorn bridge.api.app:app --host 127.0.0.1 --port 8000 --workers 4
-Restart=always
-RestartSec=5
+### 2. Environment variables (Environment tab)
 
-[Install]
-WantedBy=multi-user.target
+```env
+SECRET_KEY=<openssl rand -hex 32>
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=<a strong password>
+PUBLIC_BASE_URL=https://api.your-domain.com
 ```
 
-Enable and start:
+Everything else has production defaults (see `.env.example`). The default admin password
+is **refused** in production; if `SECRET_KEY` is missing, a random one is generated and
+stored in the data volume.
+
+### 3. Persistent volumes (Advanced → Volumes)
+
+| Type | Volume name | Mount path |
+|------|-------------|------------|
+| Volume mount | `dramabiliki-data` | `/app/data` (SQLite DB + secret) |
+| Volume mount | `dramabiliki-media` | `/app/media` (cached WebP covers) |
+
+Use *volume* mounts (not bind mounts): the container runs as uid 1000.
+
+### 4. Domain (Domains tab)
+Host `api.your-domain.com`, **container port `8000`**, HTTPS on with Let's Encrypt.
+Point the DNS `A` record of that host to your VPS IP.
+
+### 5. Deploy & check
+- `https://api.your-domain.com/health` → `{"status":"healthy"}`
+- `https://api.your-domain.com/admin` → login page
+- On an empty database the first light sync starts automatically after boot
+  (follow it in **Admin → Synchronisation**), then every 30 min + a full sync daily.
+
+### 6. Point the mobile app to the server
+In the app: **Profile → Server Bridge URL** → `https://api.your-domain.com`, or change
+`defaultBaseUrl` in `mobile/lib/core/constants.dart` before building the release APK.
+
+### Notes
+- Run **a single process/worker**: the scheduler and the sync lock live in-process.
+- Behind Traefik, URLs (covers, HLS) are generated with `https://` thanks to proxy headers;
+  `PUBLIC_BASE_URL` forces the value if needed.
+
+### Alternative: plain Docker / systemd
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable dramabiliki
-sudo systemctl start dramabiliki
+docker compose up -d --build      # needs ADMIN_PASSWORD in the environment or .env
 ```
-
-### 2. Nginx Reverse Proxy with HTTPS
-
-Create `/etc/nginx/sites-available/dramabiliki`:
-
-```nginx
-server {
-    server_name api.dramabiliki.yourdomain.com;
-
-    # Gzip Compression
-    gzip on;
-    gzip_types text/plain application/json application/vnd.apple.mpegurl application/x-mpegURL text/vtt;
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        proxy_connect_timeout 60s;
-        proxy_read_timeout 120s;
-    }
-
-    # Cache static WebP covers
-    location /media/ {
-        proxy_pass http://127.0.0.1:8000;
-        expires 30d;
-        add_header Cache-Control "public, no-transform";
-    }
-}
-```
-
-Enable site and generate SSL certificate:
-```bash
-sudo ln -s /etc/nginx/sites-available/dramabiliki /etc/nginx/sites-enabled/
-sudo certbot --nginx -d api.dramabiliki.yourdomain.com
-```
-
-### 3. Docker Deployment (Alternative)
-
-```bash
-docker compose up -d --build
-```
+With systemd, run `python -m bridge` (one worker) behind Nginx forwarding
+`Host` and `X-Forwarded-Proto`.
 
 ---
 
@@ -230,6 +218,8 @@ docker compose up -d --build
 - **SSRF Mitigation**: The Bridge strictly validates all proxy segment requests against an approved whitelist (`dramadunyam.com`, `dramaflix.net`, and upstream CDN endpoints).
 - **Ephemeral URL Protection**: Signed CDN URLs (`pexp`/`Expires`) are never permanently stored in the database.
 - **Device Authentication**: Secure stateless JWT issued per device (`/api/v1/auth/device`) with future extensibility for OAuth (Google/Apple).
+- **Admin Panel**: Login required (signed HttpOnly session cookie, SameSite=strict, same-origin check on every action, lockout after 5 failed attempts per IP).
+- **Secrets**: The public default `SECRET_KEY` / `ADMIN_PASSWORD` are never used in production.
 
 ---
 

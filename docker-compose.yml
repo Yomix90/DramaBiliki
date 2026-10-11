@@ -1,26 +1,31 @@
-version: "3.8"
+# Works locally (`docker compose up -d`) and as a Dokploy "Docker Compose" service.
+# In Dokploy, set the variables below in the Environment tab and attach your domain
+# to the "bridge" service on port 8000 (Domains tab): Traefik handles HTTPS.
 
 services:
   bridge:
     build: .
-    container_name: dramabiliki_bridge
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
-      - APP_ENV=production
-      - HOST=0.0.0.0
-      - PORT=8000
-      - SECRET_KEY=change-this-in-production-to-a-random-secret
-      - SOURCE_BASE_URL=https://dramadunyam.com
-      - SOURCE_CDN_PRIMARY=cdn2.dramaflix.net
-      - SOURCE_CDN_FAILOVER=cdn.dramaflix.net
-      - DATABASE_URL=sqlite:////app/data/dramabiliki.db
-      - MEDIA_DIR=/app/media
-      - COVERS_DIR=/app/media/covers
-      - STREAM_CACHE_TTL_SECONDS=600
-      - PROXY_SEGMENTS=false
-      - SCANNER_MAX_CONCURRENT_REQUESTS=2
+      APP_ENV: production
+      PORT: "8000"
+      # Required: long random strings (e.g. `openssl rand -hex 32`)
+      SECRET_KEY: ${SECRET_KEY:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in the environment}
+      # Public HTTPS URL of the bridge, e.g. https://api.dramabiliki.com
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      SOURCE_BASE_URL: ${SOURCE_BASE_URL:-https://dramadunyam.com}
+      SOURCE_CDN_PRIMARY: ${SOURCE_CDN_PRIMARY:-cdn2.dramaflix.net}
+      SOURCE_CDN_FAILOVER: ${SOURCE_CDN_FAILOVER:-cdn.dramaflix.net}
+      STREAM_CACHE_TTL_SECONDS: ${STREAM_CACHE_TTL_SECONDS:-600}
+      PROXY_SEGMENTS: ${PROXY_SEGMENTS:-false}
+      ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
+      LIGHT_SYNC_INTERVAL_MINUTES: ${LIGHT_SYNC_INTERVAL_MINUTES:-30}
+      FULL_SYNC_HOUR_UTC: ${FULL_SYNC_HOUR_UTC:-3}
+      SCANNER_MAX_CONCURRENT_REQUESTS: ${SCANNER_MAX_CONCURRENT_REQUESTS:-2}
     volumes:
       - bridge_data:/app/data
       - bridge_media:/app/media

@@ -9,6 +9,7 @@ from bridge.config import settings
 from bridge.database import get_db
 from bridge.models import Series
 from bridge.streamer import stream_resolver
+from bridge.urls import public_base_url
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ async def get_stream_playlist(
         if series:
             source_id = series.source_id
 
-    bridge_base_url = str(request.base_url).rstrip("/")
+    bridge_base_url = public_base_url(request)
 
     try:
         content, content_type, ttl = await stream_resolver.get_playlist(

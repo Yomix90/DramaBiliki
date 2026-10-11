@@ -9,6 +9,7 @@ from bridge.auth import (
     get_or_create_device_user,
     get_current_user,
 )
+from bridge.urls import public_base_url, series_cover_url
 from bridge.api.v1.schemas import (
     DeviceAuthRequest,
     AuthResponse,
@@ -124,7 +125,7 @@ async def get_my_library(
     current_user: User = Depends(get_current_user),
 ):
     """Returns user's favorites and viewing history."""
-    base_url = str(request.base_url).rstrip("/")
+    base_url = public_base_url(request)
     lang = lang or current_user.preferred_language or "en"
 
     # Favorites
@@ -132,7 +133,7 @@ async def get_my_library(
     for fav in current_user.favorites:
         s = fav.series
         if s and s.status == "active":
-            cover = f"{base_url}/media/covers/{s.local_cover}" if s.local_cover else s.cover_url
+            cover = series_cover_url(s, base_url)
             favorites.append({
                 "id": s.id,
                 "slug": s.slug,
@@ -149,7 +150,7 @@ async def get_my_library(
     for h in current_user.history_entries:
         s = h.series
         if s:
-            cover = f"{base_url}/media/covers/{s.local_cover}" if s.local_cover else s.cover_url
+            cover = series_cover_url(s, base_url)
             history.append({
                 "series_id": s.id,
                 "series_slug": s.slug,

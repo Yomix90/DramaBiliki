@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Connexion — DramaBiliki Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        body {
+            min-height: 100vh;
+            background: radial-gradient(1200px 600px at 20% -10%, rgba(255, 46, 85, .18), transparent 60%), #07080a;
+            color: #e6e8eb;
+        }
+        .login-card { max-width: 400px; background: #121418; border: 1px solid #24272e; border-radius: 18px; }
+        .brand-icon {
+            width: 56px; height: 56px; border-radius: 16px;
+            background: linear-gradient(135deg, #ff2e55, #ff7a45);
+            display: inline-flex; align-items: center; justify-content: center;
+            box-shadow: 0 10px 30px rgba(255, 46, 85, .35);
+        }
+        .form-control { background: #1d2026; border-color: #2a2e36; }
+        .form-control:focus { background: #1d2026; border-color: #ff2e55; box-shadow: 0 0 0 .2rem rgba(255, 46, 85, .15); }
+        .btn-brand { background: linear-gradient(90deg, #ff2e55, #ff7a45); border: 0; color: #fff; font-weight: 700; }
+        .btn-brand:hover { filter: brightness(1.08); color: #fff; }
+    </style>
+</head>
+<body class="d-flex align-items-center justify-content-center p-3">
+<div class="login-card w-100 p-4 p-md-5 shadow-lg">
+    <div class="text-center mb-4">
+        <div class="brand-icon mb-3"><i class="bi bi-play-fill fs-2 text-white"></i></div>
+        <h1 class="h4 fw-bold mb-1">DramaBiliki Bridge</h1>
+        <div class="text-secondary small">Panneau d'administration · v{{ version }}</div>
+    </div>
+
+    {% if locked %}
+    <div class="alert alert-warning small">
+        <i class="bi bi-shield-lock"></i>
+        L'accès admin est verrouillé : le mot de passe par défaut est refusé en production.
+        Définissez la variable d'environnement <code>ADMIN_PASSWORD</code> (dans Dokploy → Environment) puis redéployez.
+    </div>
+    {% endif %}
+
+    {% if error == 'invalid' %}
+    <div class="alert alert-danger small py-2"><i class="bi bi-x-circle"></i> Identifiants incorrects.</div>
+    {% elif error == 'locked' %}
+    <div class="alert alert-danger small py-2"><i class="bi bi-hourglass-split"></i> Trop de tentatives. Réessayez dans 15 minutes.</div>
+    {% endif %}
+
+    <form method="post" action="/admin/login" autocomplete="on">
+        <div class="mb-3">
+            <label class="form-label small text-secondary" for="username">Utilisateur</label>
+            <input class="form-control" id="username" name="username" autocomplete="username" required autofocus {{ 'disabled' if locked else '' }}>
+        </div>
+        <div class="mb-4">
+            <label class="form-label small text-secondary" for="password">Mot de passe</label>
+            <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required {{ 'disabled' if locked else '' }}>
+        </div>
+        <button class="btn btn-brand w-100 py-2" type="submit" {{ 'disabled' if locked else '' }}>
+            <i class="bi bi-box-arrow-in-right"></i> Se connecter
+        </button>
+    </form>
+</div>
+</body>
+</html>

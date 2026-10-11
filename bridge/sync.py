@@ -19,6 +19,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bridge.sync")
 
+# One sync at a time per process: admin-triggered and scheduled runs would
+# otherwise hammer the source and fight over the SQLite write lock.
+_sync_lock = asyncio.Lock()
+
+
+def is_sync_running() -> bool:
+    return _sync_lock.locked()
+
+
+def mark_interrupted_runs(db: Session) -> int:
+    """Flags runs left in 'running' state by a previous process (crash/redeploy)."""
+    stale = db.query(SyncRun).filter(SyncRun.status == "running").all()
+    for run in stale:
+        run.status = "failed"
+        run.finished_at = run.finished_at or datetime.datetime.utcnow()
+        run.log_messages = ((run.log_messages or "") + "\nInterrupted by a server restart.").strip()
+    if stale:
+        db.commit()
+    return len(stale)
+
 class SyncService:
     def __init__(self, db: Session):
         self.db = db
@@ -140,8 +160,21 @@ class SyncService:
         sync_type: str = "light",
         max_pages: Optional[int] = None,
         target_slug: Optional[str] = None,
+    ) -> Optional[SyncRun]:
+        """Executes a synchronization run (full, light, or single). Returns None if one is already running."""
+        if _sync_lock.locked():
+            logger.info(f"Skipping {sync_type} sync: another sync is already running.")
+            await self.scanner.close()
+            return None
+        async with _sync_lock:
+            return await self._run_sync_locked(sync_type, max_pages, target_slug)
+
+    async def _run_sync_locked(
+        self,
+        sync_type: str,
+        max_pages: Optional[int],
+        target_slug: Optional[str],
     ) -> SyncRun:
-        """Executes a synchronization run (full, light, or single)."""
         run = SyncRun(
             sync_type=sync_type,
             target_slug=target_slug,
@@ -158,7 +191,11 @@ class SyncService:
                     run.series_discovered = 1
                     run.series_updated = 1
                     run.episodes_synced = len(s.episodes)
-                run.status = "completed"
+                    run.status = "completed"
+                else:
+                    run.status = "failed"
+                    run.errors_count = 1
+                    run.log_messages = f"Series '{target_slug}' could not be fetched from the source."
             else:
                 # Page limit based on sync type
                 if sync_type == "light":

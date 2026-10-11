@@ -60,3 +60,6 @@ mobile/macos/Flutter/ephemeral/
 .DS_Store
 Thumbs.db
 .claude/launch.json
+
+# Generated secret (bridge/config.py) — never commit
+.secret_key

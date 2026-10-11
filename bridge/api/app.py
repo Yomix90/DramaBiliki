@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -6,8 +7,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from bridge.config import settings
-from bridge.database import init_db
-from bridge.scheduler import start_scheduler, stop_scheduler
+from bridge.database import SessionLocal, init_db
+from bridge.scheduler import start_scheduler, startup_sync_if_empty, stop_scheduler
+from bridge.sync import mark_interrupted_runs
 from bridge.streamer import stream_resolver
 from bridge.api.v1.routes_home import router as home_router
 from bridge.api.v1.routes_series import router as series_router
@@ -23,13 +25,30 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting DramaBiliki Bridge Server...")
     init_db()
+    db = SessionLocal()
     try:
-        start_scheduler()
-    except Exception as e:
-        logger.warning(f"Could not start background scheduler: {e}")
+        interrupted = mark_interrupted_runs(db)
+        if interrupted:
+            logger.info(f"Marked {interrupted} interrupted sync run(s) as failed.")
+    finally:
+        db.close()
+
+    if not settings.admin_login_allowed:
+        logger.warning("Admin panel is LOCKED: set a non-default ADMIN_PASSWORD environment variable to enable it.")
+
+    startup_task = None
+    if settings.ENABLE_SCHEDULER:
+        try:
+            start_scheduler()
+        except Exception as e:
+            logger.warning(f"Could not start background scheduler: {e}")
+        if settings.SYNC_ON_STARTUP_IF_EMPTY:
+            startup_task = asyncio.create_task(startup_sync_if_empty())
     yield
     # Shutdown
     logger.info("Stopping DramaBiliki Bridge Server...")
+    if startup_task and not startup_task.done():
+        startup_task.cancel()
     try:
         stop_scheduler()
     except Exception:
@@ -38,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.APP_NAME,
-    version="1.0.0",
+    version=settings.APP_VERSION,
     description="High-performance Bridge & Streaming Server for DramaBiliki Mobile App",
     lifespan=lifespan,
     docs_url="/docs",
@@ -48,11 +67,11 @@ app = FastAPI(
 # Compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# CORS configuration
+# CORS configuration (the API uses bearer tokens, not cookies, so credentials are not needed)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -69,10 +88,21 @@ app.include_router(media_router)
 # Mount Admin Web Panel
 app.include_router(admin_router)
 
+@app.get("/", tags=["Health"], include_in_schema=False)
+async def root():
+    return {
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "api": "/api/v1",
+        "docs": "/docs",
+        "admin": "/admin",
+        "health": "/health",
+    }
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {
         "status": "healthy",
         "app": settings.APP_NAME,
-        "version": "1.0.0",
+        "version": settings.APP_VERSION,
     }

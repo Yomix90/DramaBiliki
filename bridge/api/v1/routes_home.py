@@ -6,6 +6,7 @@ from bridge.database import get_db
 from bridge.models import Series, Banner, WatchHistory, Genre, User
 from bridge.auth import get_optional_user
 from bridge.api.v1.schemas import HomeFeedOut, BannerOut, HomeSectionOut, SeriesBriefOut
+from bridge.urls import public_base_url, series_cover_url
 
 router = APIRouter(prefix="/home", tags=["Home"])
 
@@ -16,11 +17,7 @@ SECTION_TITLES = {
 }
 
 def serialize_series_brief(series: Series, lang: str, request: Request) -> SeriesBriefOut:
-    base_url = str(request.base_url).rstrip("/")
-    if series.local_cover:
-        cover = f"{base_url}/media/covers/{series.local_cover}"
-    else:
-        cover = series.cover_url or ""
+    cover = series_cover_url(series, public_base_url(request))
 
     return SeriesBriefOut(
         id=series.id,
@@ -44,7 +41,7 @@ async def get_home_feed(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_user),
 ):
-    base_url = str(request.base_url).rstrip("/")
+    base_url = public_base_url(request)
 
     # 1. Banners
     db_banners = db.query(Banner).filter(Banner.is_active == True).order_by(Banner.sort_order).limit(5).all()
@@ -57,7 +54,7 @@ async def get_home_feed(
                 id=b.id,
                 title=b.title,
                 subtitle=b.subtitle,
-                image_url=b.image_url,
+                image_url=f"{base_url}{b.image_url}" if (b.image_url or "").startswith("/") else b.image_url,
                 target_series_id=b.target_series_id,
                 target_series_slug=target_slug,
             ))
@@ -65,7 +62,7 @@ async def get_home_feed(
         # Fallback: create dynamic banners from top 3 active series
         top_series = db.query(Series).filter(Series.status == "active").order_by(Series.rating.desc(), Series.id.desc()).limit(3).all()
         for idx, s in enumerate(top_series, start=1):
-            cover = f"{base_url}/media/covers/{s.local_cover}" if s.local_cover else s.cover_url
+            cover = series_cover_url(s, base_url)
             banners_out.append(BannerOut(
                 id=idx,
                 title=s.get_title(lang),
@@ -87,7 +84,7 @@ async def get_home_feed(
         )
         for h in history_rows:
             if h.series:
-                cover = f"{base_url}/media/covers/{h.series.local_cover}" if h.series.local_cover else h.series.cover_url
+                cover = series_cover_url(h.series, base_url)
                 continue_watching.append({
                     "series_id": h.series.id,
                     "series_slug": h.series.slug,
