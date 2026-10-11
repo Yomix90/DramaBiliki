@@ -14,11 +14,8 @@ RUN pip install -r requirements.txt
 # Application source
 COPY bridge/ bridge/
 
-# Unprivileged user owning the persistent volumes
-RUN useradd --create-home --uid 1000 bridge \
-    && mkdir -p /app/data /app/media/covers \
-    && chown -R bridge:bridge /app
-USER bridge
+# Runs as root on purpose: volumes created by earlier deployments are root-owned.
+RUN mkdir -p /app/data /app/media/covers
 
 # Persistent data: SQLite database + generated secret key, and cached covers.
 # Mount both as volumes (Dokploy → Advanced → Volumes) so they survive redeploys.

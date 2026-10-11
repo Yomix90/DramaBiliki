@@ -151,8 +151,7 @@ flutter build apk --release
 
 ## 🌐 Part 3: VPS Deployment with Dokploy (recommended)
 
-The repository ships a production `Dockerfile` (non-root user, healthcheck, persistent
-volumes) and a Dokploy-compatible `docker-compose.yml`. Dokploy builds it from GitHub and
+The repository ships a production `Dockerfile` (healthcheck, persistent volumes) and a Dokploy-compatible `docker-compose.yml`. Dokploy builds it from GitHub and
 Traefik serves it over HTTPS.
 
 ### 1. Create the service
@@ -183,7 +182,7 @@ stored in the data volume.
 | Volume mount | `dramabiliki-data` | `/app/data` (SQLite DB + secret) |
 | Volume mount | `dramabiliki-media` | `/app/media` (cached WebP covers) |
 
-Use *volume* mounts (not bind mounts): the container runs as uid 1000.
+Volumes created by a previous deployment (`bridge_data`, `bridge_media`) are reused as-is.
 
 ### 4. Domain (Domains tab)
 Host `api.your-domain.com`, **container port `8090`**, HTTPS on with Let's Encrypt.
