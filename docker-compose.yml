@@ -1,16 +1,17 @@
 # Works locally (`docker compose up -d`) and as a Dokploy "Docker Compose" service.
 # In Dokploy, set the variables below in the Environment tab and attach your domain
-# to the "bridge" service on port 8000 (Domains tab): Traefik handles HTTPS.
+# to the "bridge" service on port 8090 (Domains tab): Traefik handles HTTPS.
+# The port is also published on the host (http://<vps-ip>:8090) for direct access.
 
 services:
   bridge:
     build: .
     restart: unless-stopped
-    expose:
-      - "8000"
+    ports:
+      - "8090:8090"
     environment:
       APP_ENV: production
-      PORT: "8000"
+      PORT: "8090"
       # Required: long random strings (e.g. `openssl rand -hex 32`)
       SECRET_KEY: ${SECRET_KEY:-}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}

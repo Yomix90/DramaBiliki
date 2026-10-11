@@ -186,7 +186,7 @@ stored in the data volume.
 Use *volume* mounts (not bind mounts): the container runs as uid 1000.
 
 ### 4. Domain (Domains tab)
-Host `api.your-domain.com`, **container port `8000`**, HTTPS on with Let's Encrypt.
+Host `api.your-domain.com`, **container port `8090`**, HTTPS on with Let's Encrypt.
 Point the DNS `A` record of that host to your VPS IP.
 
 ### 5. Deploy & check

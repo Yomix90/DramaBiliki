@@ -23,7 +23,7 @@ USER bridge
 # Persistent data: SQLite database + generated secret key, and cached covers.
 # Mount both as volumes (Dokploy → Advanced → Volumes) so they survive redeploys.
 ENV HOST=0.0.0.0 \
-    PORT=8000 \
+    PORT=8090 \
     APP_ENV=production \
     DATA_DIR=/app/data \
     DATABASE_URL=sqlite:////app/data/dramabiliki.db \
@@ -31,9 +31,9 @@ ENV HOST=0.0.0.0 \
     COVERS_DIR=/app/media/covers
 VOLUME ["/app/data", "/app/media"]
 
-EXPOSE 8000
+EXPOSE 8090
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8000\")}/health', timeout=4)" || exit 1
+    CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"PORT\",\"8090\")}/health', timeout=4)" || exit 1
 
 CMD ["python", "-m", "bridge"]
