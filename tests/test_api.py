@@ -155,3 +155,25 @@ def test_source_proxy_option(monkeypatch):
     assert settings.source_client_kwargs() == {}
     monkeypatch.setattr(settings, "SOURCE_PROXY", "http://user:pw@proxy.example:8080")
     assert settings.source_client_kwargs() == {"proxy": "http://user:pw@proxy.example:8080"}
+
+
+def test_cookie_header_parsing():
+    from bridge.source_session import parse_cookie_header
+    assert parse_cookie_header("Cookie: a=1; b=x=y ;c=") == {"a": "1", "b": "x=y", "c": ""}
+    assert parse_cookie_header("a=1\nb=2") == {"a": "1", "b": "2"}
+
+
+def test_admin_saves_source_session(client, monkeypatch):
+    import bridge.api.admin.routes_admin as ra
+
+    async def fake_test():
+        return 200, "OK"
+    monkeypatch.setattr(ra, "test_source", fake_test)
+
+    client.cookies.clear()
+    login(client)
+    r = client.post("/admin/source/session", data={"cookies": "cf_clearance=abc; dd_bilet=xyz", "user_agent": "TestUA/1.0"}, follow_redirects=False)
+    assert r.status_code == 303
+    from bridge.source_session import get_session_values
+    assert get_session_values() == ("cf_clearance=abc; dd_bilet=xyz", "TestUA/1.0")
+    assert "cf_clearance=abc" in client.get("/admin").text

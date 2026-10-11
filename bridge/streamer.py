@@ -6,6 +6,7 @@ import urllib.parse
 from typing import Dict, Tuple, Optional
 import httpx
 from bridge.config import settings
+from bridge.source_session import apply_session
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class StreamResolver:
                 follow_redirects=True,
                 **settings.source_client_kwargs(),
             )
+            apply_session(self._client)
             # Initialize session cookie
             try:
                 await self._client.get(f"{settings.SOURCE_BASE_URL}/api/config")
@@ -283,6 +285,11 @@ class StreamResolver:
         secs = int(seconds % 60)
         millis = int((seconds - int(seconds)) * 1000)
         return f"{hrs:02d}:{mins:02d}:{secs:02d}.{millis:03d}"
+
+    async def reset_session(self):
+        """Drops the client and cached playlists so a new browser session applies."""
+        self._cache.clear()
+        await self.close()
 
     async def close(self):
         if self._client is not None:

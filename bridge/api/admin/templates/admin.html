@@ -403,6 +403,39 @@
 
         <!-- ============ Config ============ -->
         <div class="tab-pane fade" id="tab-config">
+            <div class="card p-3 mb-3">
+                <h6 class="fw-bold mb-1"><i class="bi bi-cookie"></i> Session navigateur pour la source</h6>
+                <p class="small text-secondary mb-3">
+                    Si la source répond <code>403</code> au VPS, collez ici les cookies d'un navigateur qui ouvre
+                    <a href="{{ settings.SOURCE_BASE_URL }}" target="_blank" rel="noopener">{{ settings.SOURCE_BASE_URL }}</a>.
+                    Dans Chrome : ouvrez le site → <kbd>F12</kbd> → onglet <em>Network</em> → rechargez → cliquez une requête
+                    vers le site → <em>Request Headers</em> → copiez la valeur de <code>cookie</code>.
+                    Utilisez le <strong>même navigateur</strong> pour le User-Agent.
+                </p>
+                <form method="post" action="/admin/source/session">
+                    <div class="mb-2">
+                        <label class="form-label small text-secondary">Cookies (en-tête <code>Cookie</code>)</label>
+                        <textarea name="cookies" rows="3" class="form-control form-control-sm font-monospace" placeholder="cf_clearance=…; dd_bilet=…">{{ source_cookies }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-secondary">User-Agent du navigateur</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" name="user_agent" id="uaInput" class="form-control font-monospace" value="{{ source_user_agent }}">
+                            <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('uaInput').value = navigator.userAgent">Utiliser ce navigateur</button>
+                        </div>
+                    </div>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button type="submit" class="btn btn-sm btn-brand"><i class="bi bi-save"></i> Enregistrer et tester</button>
+                    </div>
+                </form>
+                <form method="post" action="/admin/source/test" class="mt-2">
+                    <button class="btn btn-sm btn-outline-light"><i class="bi bi-plug"></i> Tester la source maintenant</button>
+                </form>
+                <div class="small text-secondary mt-2">
+                    Les cookies Cloudflare (<code>cf_clearance</code>) sont souvent liés à l'IP du navigateur : si le test reste en 403,
+                    la solution fiable est un proxy (<code>SOURCE_PROXY</code>).
+                </div>
+            </div>
             <div class="card p-3">
                 <h6 class="fw-bold mb-3">Configuration active <span class="text-secondary fw-normal small">(variables d'environnement, modifiables dans Dokploy)</span></h6>
                 <div class="table-responsive">

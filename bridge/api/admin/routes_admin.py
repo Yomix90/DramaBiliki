@@ -24,6 +24,8 @@ from bridge.api.admin.security import (
 from bridge.config import settings
 from bridge.database import SessionLocal, get_db
 from bridge.models import Banner, Episode, Favorite, Series, SyncRun, User, WatchHistory
+from bridge.source_session import get_session_values, save_session_values, test_source
+from bridge.streamer import stream_resolver
 from bridge.sync import SyncService, is_sync_running
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -175,6 +177,8 @@ async def admin_dashboard(
             "warnings": warnings,
             "version": settings.APP_VERSION,
             "settings": settings,
+            "source_cookies": get_session_values()[0],
+            "source_user_agent": get_session_values()[1],
         },
     )
 
@@ -358,3 +362,26 @@ async def trigger_sync(
         sync_type = "light"
     _start_sync(sync_type)
     return _redirect(f"Synchronisation {'complète' if sync_type == 'full' else 'légère'} lancée en arrière-plan", "info", tab="sync")
+
+
+# ---------------------------------------------------------------------------
+# Source session (browser cookies)
+# ---------------------------------------------------------------------------
+
+@router.post("/source/session")
+async def save_source_session(
+    cookies: str = Form(""),
+    user_agent: str = Form(""),
+    admin: str = Depends(require_admin),
+):
+    save_session_values(cookies, user_agent)
+    await stream_resolver.reset_session()
+    code, summary = await test_source()
+    level = "success" if code == 200 else "danger"
+    return _redirect(f"Session enregistrée. Test de la source : {summary}", level, tab="config")
+
+
+@router.post("/source/test")
+async def test_source_session(admin: str = Depends(require_admin)):
+    code, summary = await test_source()
+    return _redirect(f"Test de la source : {summary}", "success" if code == 200 else "danger", tab="config")

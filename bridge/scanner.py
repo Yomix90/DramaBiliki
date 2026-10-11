@@ -5,6 +5,7 @@ import time
 from typing import Dict, Any, List, Optional
 import httpx
 from bridge.config import settings
+from bridge.source_session import apply_session
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class SourceScanner:
                 follow_redirects=True,
                 **settings.source_client_kwargs(),
             )
+            apply_session(self.client)
 
             # Initialize dd_bilet cookie by requesting /api/config
             try:

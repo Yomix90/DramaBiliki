@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 import httpx
 
 from bridge.config import settings
+from bridge.source_session import source_headers
 from bridge.database import get_db
 from bridge.models import Series
 from bridge.streamer import stream_resolver
@@ -121,7 +122,7 @@ async def proxy_segment(u: str = Query(..., description="Target segment URL")):
         raise HTTPException(status_code=400, detail="Disallowed target host")
 
     async def stream_generator():
-        async with httpx.AsyncClient(headers={"User-Agent": settings.SOURCE_USER_AGENT}, **settings.source_client_kwargs()) as client:
+        async with httpx.AsyncClient(headers=source_headers(), **settings.source_client_kwargs()) as client:
             async with client.stream("GET", u) as resp:
                 async for chunk in resp.aiter_bytes(chunk_size=65536):
                     yield chunk

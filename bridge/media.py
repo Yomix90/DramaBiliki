@@ -5,6 +5,7 @@ from typing import Optional
 import httpx
 from PIL import Image
 from bridge.config import settings
+from bridge.source_session import apply_session
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ async def download_and_cache_cover(
             follow_redirects=True,
             **settings.source_client_kwargs(),
         )
+        apply_session(client)
         own_client = True
 
     try:
