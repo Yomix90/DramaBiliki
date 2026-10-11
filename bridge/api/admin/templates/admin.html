@@ -109,7 +109,6 @@
                     <div class="card p-3 flex-grow-1">
                         <div class="section-head mb-2">
                             <h2 class="card-title-sm"><i class="bi bi-activity"></i> Activité de synchronisation</h2>
-                            <a href="/admin?tab=sync" data-dash-tab="sync" class="btn btn-sm btn-outline-secondary">Historique</a>
                         </div>
                         {% for run in sync_runs[:5] %}
                         <div class="d-flex align-items-center gap-2 py-2 {{ 'border-top' if not loop.first }}" style="border-color: var(--border) !important">
@@ -377,11 +376,6 @@
                                             <i class="bi bi-star{{ '-fill' if s.is_featured else '' }}"></i>
                                         </button>
                                     </form>
-                                    <form method="post" action="/admin/series/{{ s.id }}/resync" class="d-inline">
-                                        <button class="btn btn-sm btn-outline-secondary" title="Resynchroniser depuis la source" {{ 'disabled' if sync_running }}>
-                                            <i class="bi bi-arrow-clockwise"></i>
-                                        </button>
-                                    </form>
                                     <a class="btn btn-sm btn-outline-light" href="/admin/series/{{ s.id }}" title="Éditer / épisodes">
                                         <i class="bi bi-pencil"></i>
                                     </a>
@@ -485,134 +479,6 @@
             </div>
         </div>
 
-        <!-- ============ Sync ============ -->
-        <div class="tab-pane fade" id="tab-sync">
-            <div class="row g-3 mb-3">
-                <div class="col-md-4">
-                    <div class="card p-3 h-100">
-                        <h6 class="fw-bold"><i class="bi bi-lightning-charge text-warning"></i> Sync légère</h6>
-                        <p class="small text-secondary">Premières pages du catalogue : nouveaux épisodes et nouvelles séries. Automatique toutes les {{ settings.LIGHT_SYNC_INTERVAL_MINUTES }} min.</p>
-                        <form method="post" action="/admin/sync/trigger" class="mt-auto">
-                            <input type="hidden" name="sync_type" value="light">
-                            <button class="btn btn-sm btn-brand w-100" {{ 'disabled' if sync_running }}>Lancer</button>
-                        </form>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card p-3 h-100">
-                        <h6 class="fw-bold"><i class="bi bi-arrow-repeat text-info"></i> Sync complète</h6>
-                        <p class="small text-secondary">Parcourt tout le catalogue (plus long). Automatique chaque jour à {{ settings.FULL_SYNC_HOUR_UTC }}h UTC.</p>
-                        <form method="post" action="/admin/sync/trigger" class="mt-auto">
-                            <input type="hidden" name="sync_type" value="full">
-                            <button class="btn btn-sm btn-outline-light w-100" {{ 'disabled' if sync_running }}>Lancer</button>
-                        </form>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card p-3 h-100">
-                        <h6 class="fw-bold"><i class="bi bi-bullseye text-danger"></i> Une série précise</h6>
-                        <p class="small text-secondary">Slug ou URL de la série sur la source.</p>
-                        <form method="post" action="/admin/sync/trigger" class="mt-auto d-flex gap-2">
-                            <input type="hidden" name="sync_type" value="single">
-                            <input type="text" name="slug" class="form-control form-control-sm" placeholder="mon-drama-slug" required>
-                            <button class="btn btn-sm btn-outline-light" {{ 'disabled' if sync_running }}>OK</button>
-                        </form>
-                    </div>
-                </div>
-            </div>
-
-            <div class="card p-3">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="fw-bold mb-0">Historique</h6>
-                    {% if sync_running %}<span class="small text-warning pulse" id="syncLive">Actualisation automatique…</span>{% endif %}
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle">
-                        <thead><tr><th>Début</th><th>Type</th><th>Statut</th><th>Durée</th><th>Séries</th><th>Épisodes</th><th>Erreurs</th></tr></thead>
-                        <tbody>
-                        {% for run in sync_runs %}
-                            <tr>
-                                <td class="small text-nowrap">{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') if run.started_at else '-' }}</td>
-                                <td><span class="badge text-bg-secondary">{{ run.sync_type }}{% if run.target_slug %} · {{ run.target_slug }}{% endif %}</span></td>
-                                <td>
-                                    <span class="badge {{ 'text-bg-success' if run.status == 'completed' else 'text-bg-warning pulse' if run.status == 'running' else 'text-bg-danger' }}">{{ run.status }}</span>
-                                </td>
-                                <td class="small text-secondary">
-                                    {% if run.finished_at and run.started_at %}{{ ((run.finished_at - run.started_at).total_seconds() // 1)|int }} s{% else %}—{% endif %}
-                                </td>
-                                <td>{{ run.series_discovered }} <span class="text-secondary small">(+{{ run.series_updated }} à jour)</span></td>
-                                <td>{{ run.episodes_synced }}</td>
-                                <td class="{{ 'text-danger fw-bold' if run.errors_count else '' }}">{{ run.errors_count }}</td>
-                            </tr>
-                            {% if run.log_messages %}
-                            <tr><td colspan="7" class="pt-0"><div class="log-box p-2 text-secondary">{{ run.log_messages }}</div></td></tr>
-                            {% endif %}
-                        {% else %}
-                            <tr><td colspan="7" class="text-center text-secondary py-4">Aucune synchronisation pour le moment.</td></tr>
-                        {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- ============ Config ============ -->
-        <div class="tab-pane fade" id="tab-config">
-            <div class="card p-3 mb-3">
-                <h6 class="fw-bold mb-1"><i class="bi bi-cookie"></i> Session navigateur pour la source</h6>
-                <p class="small text-secondary mb-3">
-                    Si la source répond <code>403</code> au VPS, collez ici les cookies d'un navigateur qui ouvre
-                    <a href="{{ settings.SOURCE_BASE_URL }}" target="_blank" rel="noopener">{{ settings.SOURCE_BASE_URL }}</a>.
-                    Dans Chrome : ouvrez le site → <kbd>F12</kbd> → onglet <em>Network</em> → rechargez → cliquez une requête
-                    vers le site → <em>Request Headers</em> → copiez la valeur de <code>cookie</code>.
-                    Utilisez le <strong>même navigateur</strong> pour le User-Agent.
-                </p>
-                <form method="post" action="/admin/source/session">
-                    <div class="mb-2">
-                        <label class="form-label small text-secondary">Cookies (en-tête <code>Cookie</code>)</label>
-                        <textarea name="cookies" rows="3" class="form-control form-control-sm font-monospace" placeholder="cf_clearance=…; dd_bilet=…">{{ source_cookies }}</textarea>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small text-secondary">User-Agent du navigateur</label>
-                        <div class="input-group input-group-sm">
-                            <input type="text" name="user_agent" id="uaInput" class="form-control font-monospace" value="{{ source_user_agent }}">
-                            <button type="button" class="btn btn-outline-secondary" onclick="document.getElementById('uaInput').value = navigator.userAgent">Utiliser ce navigateur</button>
-                        </div>
-                    </div>
-                    <div class="d-flex gap-2 flex-wrap">
-                        <button type="submit" class="btn btn-sm btn-brand"><i class="bi bi-save"></i> Enregistrer et tester</button>
-                    </div>
-                </form>
-                <form method="post" action="/admin/source/test" class="mt-2">
-                    <button class="btn btn-sm btn-outline-light"><i class="bi bi-plug"></i> Tester la source maintenant</button>
-                </form>
-                <div class="small text-secondary mt-2">
-                    Les cookies Cloudflare (<code>cf_clearance</code>) sont souvent liés à l'IP du navigateur : si le test reste en 403,
-                    la solution fiable est un proxy (<code>SOURCE_PROXY</code>).
-                </div>
-            </div>
-            <div class="card p-3">
-                <h6 class="fw-bold mb-3">Configuration active <span class="text-secondary fw-normal small">(variables d'environnement, modifiables dans Dokploy)</span></h6>
-                <div class="table-responsive">
-                    <table class="table align-middle small">
-                        <tbody>
-                            <tr><th class="text-secondary">APP_ENV</th><td><code>{{ settings.APP_ENV }}</code></td></tr>
-                            <tr><th class="text-secondary">PUBLIC_BASE_URL</th><td><code>{{ settings.PUBLIC_BASE_URL or '(déduit de la requête)' }}</code> — URL à saisir dans l'app mobile (Profil → URL du serveur)</td></tr>
-                            <tr><th class="text-secondary">Base de données</th><td><code>{{ settings.DATABASE_URL.split('://')[0] }}</code></td></tr>
-                            <tr><th class="text-secondary">Source</th><td><code>{{ settings.SOURCE_BASE_URL }}</code></td></tr>
-                            <tr><th class="text-secondary">Proxy vers la source</th><td>{{ 'Configuré (SOURCE_PROXY)' if settings.SOURCE_PROXY else 'Aucun — requêtes directes depuis le VPS' }}</td></tr>
-                            <tr><th class="text-secondary">CDN principal / secours</th><td><code>{{ settings.SOURCE_CDN_PRIMARY }}</code> / <code>{{ settings.SOURCE_CDN_FAILOVER }}</code></td></tr>
-                            <tr><th class="text-secondary">Proxy des segments vidéo</th><td>{{ 'Activé' if settings.PROXY_SEGMENTS else 'Désactivé (les apps lisent le CDN directement)' }}</td></tr>
-                            <tr><th class="text-secondary">Planificateur</th><td>{{ 'Activé' if settings.ENABLE_SCHEDULER else 'Désactivé' }} — légère toutes les {{ settings.LIGHT_SYNC_INTERVAL_MINUTES }} min, complète à {{ settings.FULL_SYNC_HOUR_UTC }}h UTC</td></tr>
-                            <tr><th class="text-secondary">Cache des flux</th><td>{{ settings.STREAM_CACHE_TTL_SECONDS }} s</td></tr>
-                            <tr><th class="text-secondary">Scanner</th><td>{{ settings.SCANNER_MAX_CONCURRENT_REQUESTS }} requêtes simultanées, délai {{ settings.SCANNER_REQUEST_DELAY_MIN }}–{{ settings.SCANNER_REQUEST_DELAY_MAX }} s</td></tr>
-                            <tr><th class="text-secondary">Santé</th><td><a href="/health" target="_blank"><code>/health</code></a></td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
     </div>
 {% endblock %}
 
@@ -624,8 +490,6 @@
         series: ['Séries', 'Catalogue, visibilité et mise en avant'],
         banners: ['Bannières', "Carrousel de l'écran d'accueil"],
         telegram: ['Telegram', 'Compte lié et chaînes importées'],
-        sync: ['Synchronisation', 'Imports automatiques et historique'],
-        config: ['Configuration', 'Paramètres du serveur'],
     };
     function showSection(name, push) {
         if (!SECTIONS[name]) name = 'overview';
@@ -664,7 +528,7 @@
                 const data = await res.json();
                 if (!data.sync_running) {
                     const url = new URL(location.href);
-                    url.searchParams.set('tab', 'sync');
+                    url.searchParams.set('tab', 'telegram');
                     url.searchParams.delete('msg');
                     location.href = url.toString();
                     return;

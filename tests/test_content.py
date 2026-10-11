@@ -174,3 +174,51 @@ def test_incomplete_upload_is_refused(client):
     r = client.post(f"/admin/uploads/{job['id']}/complete")
     assert r.status_code == 400 and "incomplet" in r.json()["error"]
     assert client.post("/admin/uploads/init", json={"filename": "notes.txt", "size": 10}).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Unplayable files (HLS fMP4 fragments without init segment)
+# ---------------------------------------------------------------------------
+
+FRAGMENT = b"\x00\x00\x04\xf8moof" + b"\x00" * 600  # what the broken .ts files start with
+
+
+def test_check_header():
+    from bridge.video_check import MISSING_INIT, check_header
+    assert check_header(FRAGMENT) == MISSING_INIT
+    assert check_header(b"\x00\x00\x00\x18ftypisom" + b"\x00" * 40) is None
+    ts = bytearray(400); ts[0] = ts[188] = 0x47
+    assert check_header(bytes(ts)) is None
+
+
+def test_upload_rejects_fragment_and_series_check_flags_it(client):
+    admin_login(client)
+    app_settings.set_many({"upload_destination": "local", "upload_convert_ts": "false"})
+    name = f"Broken {uuid.uuid4().hex[:5]} - S01E01.ts"
+    job = client.post("/admin/uploads/init", json={"filename": name, "size": len(FRAGMENT)}).json()
+    client.put(f"/admin/uploads/{job['id']}?offset=0", content=FRAGMENT)
+    client.post(f"/admin/uploads/{job['id']}/complete")
+    for _ in range(50):
+        status = next(j for j in client.get("/admin/uploads/jobs").json() if j["id"] == job["id"])
+        if status["status"] in ("done", "error"):
+            break
+        time.sleep(0.1)
+    assert status["status"] == "error" and "init" in status["message"]
+
+    # An already-imported broken episode is flagged by the series analysis
+    from bridge import uploads
+    db = SessionLocal()
+    try:
+        series = uploads.create_series(db, f"Legacy {uuid.uuid4().hex[:5]}")
+        uploads.LOCAL_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+        (uploads.LOCAL_VIDEOS_DIR / f"broken-{series.id}.ts").write_bytes(FRAGMENT)
+        db.add(Episode(series_id=series.id, num=1, local_file=f"broken-{series.id}.ts", mime_type="video/mp2t"))
+        db.commit()
+        series_id = series.id
+    finally:
+        db.close()
+    page = client.get(f"/admin/series/{series_id}?check=1").text
+    assert "épisode(s) illisible(s)" in page
+    ep_id = SessionLocal().query(Episode).filter(Episode.series_id == series_id).one().id
+    client.post(f"/admin/series/{series_id}/delete-episodes", data={"episode_id": str(ep_id)})
+    assert SessionLocal().query(Episode).filter(Episode.series_id == series_id).count() == 0

@@ -157,15 +157,12 @@
 
         <div class="nav-section">Sources</div>
         <a class="side-link {{ 'active' if active == 'telegram' }}" href="/admin?tab=telegram" data-dash-tab="telegram"><i class="bi bi-telegram"></i> Telegram</a>
-        <a class="side-link {{ 'active' if active == 'sync' }}" href="/admin?tab=sync" data-dash-tab="sync"><i class="bi bi-arrow-repeat"></i> Synchronisation
-            {% if sync_running is defined and sync_running %}<span class="side-badge pulse">en cours</span>{% endif %}</a>
 
         <div class="nav-section">Audience</div>
         <a class="side-link {{ 'active' if active == 'users' }}" href="/admin/users"><i class="bi bi-people"></i> Utilisateurs</a>
         <a class="side-link {{ 'active' if active == 'app' }}" href="/admin/app"><i class="bi bi-phone"></i> Application &amp; pubs</a>
 
         <div class="nav-section">Système</div>
-        <a class="side-link {{ 'active' if active == 'config' }}" href="/admin?tab=config" data-dash-tab="config"><i class="bi bi-sliders"></i> Configuration</a>
         <a class="side-link" href="/docs" target="_blank" rel="noopener"><i class="bi bi-code-slash"></i> Documentation API <i class="bi bi-box-arrow-up-right ms-auto" style="font-size:.75rem"></i></a>
     </nav>
     <div class="sidebar-footer">

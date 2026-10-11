@@ -22,13 +22,11 @@ from bridge.api.admin.security import (
     set_session_cookie,
 )
 from bridge.config import settings
-from bridge.database import SessionLocal, get_db
+from bridge.database import get_db
 from bridge.models import Banner, Episode, Favorite, Series, SyncRun, TelegramChannel, User, WatchHistory
 from bridge.telegram.client import telegram_service
 from bridge.telegram.sync import run_telegram_sync
-from bridge.source_session import get_session_values, save_session_values, test_source
-from bridge.streamer import stream_resolver
-from bridge.sync import SyncService, is_sync_running
+from bridge.sync import is_sync_running
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -44,19 +42,6 @@ _background_tasks: set = set()
 def _redirect(msg: str, level: str = "success", tab: str = "series", **params) -> RedirectResponse:
     query = {"msg": msg, "level": level, "tab": tab, **{k: v for k, v in params.items() if v not in (None, "")}}
     return RedirectResponse(url=f"/admin?{urllib.parse.urlencode(query)}", status_code=status.HTTP_303_SEE_OTHER)
-
-
-def _start_sync(sync_type: str, target_slug: Optional[str] = None, max_pages: Optional[int] = None) -> None:
-    async def run_in_bg():
-        db = SessionLocal()
-        try:
-            await SyncService(db).run_sync(sync_type=sync_type, target_slug=target_slug, max_pages=max_pages)
-        finally:
-            db.close()
-
-    task = asyncio.create_task(run_in_bg())
-    _background_tasks.add(task)
-    task.add_done_callback(_background_tasks.discard)
 
 
 # ---------------------------------------------------------------------------
@@ -194,8 +179,6 @@ async def admin_dashboard(
             "tg_channels": tg_channels,
             "tg_available": tg_available,
             "tg_dialogs": bool(tg_dialogs),
-            "source_cookies": get_session_values()[0],
-            "source_user_agent": get_session_values()[1],
         },
     )
 
@@ -241,17 +224,6 @@ async def toggle_series_featured(series_id: int, db: Session = Depends(get_db), 
     series.is_featured = not series.is_featured
     db.commit()
     return _redirect(f"« {series.title} » {'mise en avant' if series.is_featured else 'retirée de la une'}")
-
-
-@router.post("/series/{series_id}/resync")
-async def resync_series(series_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
-    series = db.query(Series).filter(Series.id == series_id).first()
-    if not series:
-        return _redirect("Série introuvable", "danger")
-    if is_sync_running():
-        return _redirect("Une synchronisation est déjà en cours", "warning")
-    _start_sync("single", target_slug=series.slug)
-    return _redirect(f"Resynchronisation de « {series.title} » lancée", "info", tab="sync")
 
 
 # ---------------------------------------------------------------------------
@@ -311,55 +283,6 @@ async def delete_banner(banner_id: int, db: Session = Depends(get_db), admin: st
         db.delete(banner)
         db.commit()
     return _redirect("Bannière supprimée", tab="banners")
-
-
-# ---------------------------------------------------------------------------
-# Sync
-# ---------------------------------------------------------------------------
-
-@router.post("/sync/trigger")
-async def trigger_sync(
-    sync_type: str = Form("light"),
-    slug: str = Form(""),
-    admin: str = Depends(require_admin),
-):
-    if is_sync_running():
-        return _redirect("Une synchronisation est déjà en cours", "warning", tab="sync")
-
-    slug = slug.strip().strip("/").split("/")[-1]
-    if sync_type == "single":
-        if not slug:
-            return _redirect("Indiquez le slug de la série", "danger", tab="sync")
-        _start_sync("single", target_slug=slug)
-        return _redirect(f"Synchronisation de « {slug} » lancée", "info", tab="sync")
-
-    if sync_type not in ("light", "full"):
-        sync_type = "light"
-    _start_sync(sync_type)
-    return _redirect(f"Synchronisation {'complète' if sync_type == 'full' else 'légère'} lancée en arrière-plan", "info", tab="sync")
-
-
-# ---------------------------------------------------------------------------
-# Source session (browser cookies)
-# ---------------------------------------------------------------------------
-
-@router.post("/source/session")
-async def save_source_session(
-    cookies: str = Form(""),
-    user_agent: str = Form(""),
-    admin: str = Depends(require_admin),
-):
-    save_session_values(cookies, user_agent)
-    await stream_resolver.reset_session()
-    code, summary = await test_source()
-    level = "success" if code == 200 else "danger"
-    return _redirect(f"Session enregistrée. Test de la source : {summary}", level, tab="config")
-
-
-@router.post("/source/test")
-async def test_source_session(admin: str = Depends(require_admin)):
-    code, summary = await test_source()
-    return _redirect(f"Test de la source : {summary}", "success" if code == 200 else "danger", tab="config")
 
 
 # ---------------------------------------------------------------------------

@@ -96,7 +96,7 @@ def test_admin_requires_login(client):
     assert response.headers["location"] == "/admin/login"
 
     # Mutations are refused too
-    response = client.post("/admin/sync/trigger", data={"sync_type": "light"}, follow_redirects=False)
+    response = client.post("/admin/banners/create", data={"title": "x"}, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/login"
 
@@ -161,19 +161,3 @@ def test_cookie_header_parsing():
     from bridge.source_session import parse_cookie_header
     assert parse_cookie_header("Cookie: a=1; b=x=y ;c=") == {"a": "1", "b": "x=y", "c": ""}
     assert parse_cookie_header("a=1\nb=2") == {"a": "1", "b": "2"}
-
-
-def test_admin_saves_source_session(client, monkeypatch):
-    import bridge.api.admin.routes_admin as ra
-
-    async def fake_test():
-        return 200, "OK"
-    monkeypatch.setattr(ra, "test_source", fake_test)
-
-    client.cookies.clear()
-    login(client)
-    r = client.post("/admin/source/session", data={"cookies": "cf_clearance=abc; dd_bilet=xyz", "user_agent": "TestUA/1.0"}, follow_redirects=False)
-    assert r.status_code == 303
-    from bridge.source_session import get_session_values
-    assert get_session_values() == ("cf_clearance=abc; dd_bilet=xyz", "TestUA/1.0")
-    assert "cf_clearance=abc" in client.get("/admin").text

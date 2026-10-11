@@ -27,6 +27,7 @@ from bridge.database import SessionLocal
 from bridge.media import save_cover_image
 from bridge.models import Episode, Genre, Series, TelegramChannel
 from bridge.parsing import VIDEO_EXTENSIONS, parse_video_name, series_title_with_season
+from bridge.video_check import HEADER_BYTES, check_header
 from bridge.video_tools import probe, remux_to_mp4, thumbnail
 
 logger = logging.getLogger("bridge.uploads")
@@ -272,6 +273,10 @@ def _upload_genre(db) -> Genre:
 async def _process(job: UploadJob) -> None:
     job.touch(status="processing", progress=0.05, message="Analyse")
     src = job.path
+    with open(src, "rb") as fh:
+        problem = check_header(fh.read(HEADER_BYTES))
+    if problem:
+        raise RuntimeError(problem)
 
     # 1. Target series and episode number
     parsed = parse_video_name(job.filename, is_filename=True)

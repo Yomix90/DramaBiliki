@@ -25,6 +25,7 @@ from bridge.models import AppConfig, Episode, Genre, Series, SyncRun, TelegramCh
 from bridge.parsing import VIDEO_EXTENSIONS, parse_video_name, series_title_with_season
 from bridge.sync import _sync_lock
 from bridge.telegram.client import telegram_service
+from bridge.video_check import HEADER_BYTES, check_header
 
 logger = logging.getLogger("bridge.telegram.sync")
 
@@ -126,6 +127,16 @@ async def _save_thumbnail(client, message, series: Series) -> None:
         logger.debug(f"No thumbnail for message {message.id}: {e}")
 
 
+async def _is_unplayable(client, message) -> bool:
+    """Reads the first bytes of the file to reject videos no player can open."""
+    try:
+        async for chunk in client.iter_download(message.media, offset=0, request_size=HEADER_BYTES, limit=1):
+            return check_header(bytes(chunk)) is not None
+    except Exception:
+        return False  # network hiccup: import it anyway
+    return False
+
+
 def _file_ext(message) -> str:
     f = message.file
     ext = (getattr(f, "ext", None) or os.path.splitext(getattr(f, "name", None) or "")[1] or "").lower()
@@ -162,6 +173,7 @@ async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False
     added = 0
     last_id = channel.last_message_id or 0
     touched = set()
+    unplayable = 0
 
     async for message in client.iter_messages(peer, min_id=min_id, reverse=True):
         last_id = max(last_id, message.id)
@@ -172,6 +184,10 @@ async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False
             Episode.tg_peer_id == channel.peer_id, Episode.tg_message_id == message.id
         ).first()
         if existing:
+            continue
+
+        if await _is_unplayable(client, message):
+            unplayable += 1
             continue
 
         title, ep_num = detect_series_and_episode(message.message or "", getattr(message.file, "name", None) or "")
@@ -220,7 +236,10 @@ async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False
     channel.last_message_id = last_id
     channel.videos_count = db.query(Episode).filter(Episode.tg_peer_id == channel.peer_id).count()
     channel.last_synced_at = datetime.datetime.utcnow()
-    channel.last_error = ""
+    channel.last_error = (
+        f"{unplayable} vidéo(s) ignorée(s) : fragments HLS sans segment d'initialisation (illisibles, à retélécharger)."
+        if unplayable else ""
+    )
     db.commit()
     return added
 

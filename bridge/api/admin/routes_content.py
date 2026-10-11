@@ -22,6 +22,7 @@ from bridge.database import get_db
 from bridge.media import save_cover_image
 from bridge.models import Episode, Favorite, Genre, Series, TelegramChannel, User, WatchHistory
 from bridge.telegram.client import telegram_service
+from bridge.video_check import HEADER_BYTES, check_header
 from bridge.video_tools import ffmpeg_available
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -148,14 +149,58 @@ async def create_series(
     return _back(f"/admin/series/{series.id}", error or "Série créée. Ajoutez maintenant ses épisodes.", "warning" if error else "success")
 
 
+async def _episode_problem(db: Session, episode: Episode) -> Optional[str]:
+    """Reads the first bytes of an episode (VPS file or Telegram) to spot unplayable videos."""
+    local = uploads.local_video_path(episode)
+    if local is not None:
+        if not local.is_file():
+            return "Fichier absent du serveur"
+        with open(local, "rb") as fh:
+            return check_header(fh.read(HEADER_BYTES))
+    if episode.tg_message_id:
+        channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == episode.tg_peer_id).first()
+        try:
+            message = await telegram_service.get_message(episode.tg_peer_id, channel.access_hash if channel else None, episode.tg_message_id)
+            head = b""
+            async for chunk in telegram_service.iter_bytes(message, 0, HEADER_BYTES - 1):
+                head += chunk
+            return check_header(head)
+        except FileNotFoundError:
+            return "Vidéo supprimée de la chaîne Telegram"
+        except Exception as e:
+            return f"Telegram indisponible ({type(e).__name__})"
+    return None
+
+
 @router.get("/series/{series_id}", response_class=HTMLResponse)
-async def series_page(series_id: int, request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+async def series_page(series_id: int, request: Request, check: int = 0, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     series = db.get(Series, series_id)
     if series is None:
         raise HTTPException(status_code=404, detail="Série introuvable")
     episodes = db.query(Episode).filter(Episode.series_id == series_id).order_by(Episode.num).all()
+    problems = {}
+    if check:
+        for episode in episodes:
+            problem = await _episode_problem(db, episode)
+            if problem:
+                problems[episode.id] = problem
     return _page(request, "series_form.html", series=series, episodes=episodes, admin=admin,
-                 genres_text=", ".join(g.name for g in series.genres))
+                 genres_text=", ".join(g.name for g in series.genres), checked=bool(check), problems=problems)
+
+
+@router.post("/series/{series_id}/delete-episodes")
+async def delete_episodes(series_id: int, request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    form = await request.form()
+    ids = [int(v) for v in form.getlist("episode_id") if str(v).isdigit()]
+    removed = 0
+    for episode in db.query(Episode).filter(Episode.series_id == series_id, Episode.id.in_(ids)).all():
+        uploads.remove_local_video(episode)
+        db.delete(episode)
+        removed += 1
+    db.flush()
+    uploads.refresh_series_counts(db, series_id)
+    db.commit()
+    return _back(f"/admin/series/{series_id}", f"{removed} épisode(s) supprimé(s)")
 
 
 @router.post("/series/{series_id}/save")
