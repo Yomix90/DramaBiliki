@@ -117,7 +117,7 @@ def test_admin_dashboard_after_login(client):
 
     page = client.get("/admin")
     assert page.status_code == 200
-    assert "Bridge Admin" in page.text
+    assert "Console d'administration" in page.text and "Tableau de bord" in page.text
     assert "Test Drama" in page.text
 
     status = client.get("/admin/api/status")

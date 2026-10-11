@@ -1,106 +1,132 @@
-<!DOCTYPE html>
-<html lang="fr" data-bs-theme="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="robots" content="noindex, nofollow">
-    <title>DramaBiliki Bridge Admin</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-    <style>
-        :root { --brand: #ff2e55; --brand2: #ff7a45; --bg: #07080a; --surface: #121418; --border: #24272e; --muted: #8b919c; }
-        body { background: var(--bg); color: #e6e8eb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        .navbar { background: rgba(7, 8, 10, .92); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
-        .brand-icon { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, var(--brand), var(--brand2)); display: inline-flex; align-items: center; justify-content: center; }
-        .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
-        .stat-card .value { font-size: 1.7rem; font-weight: 800; color: #fff; line-height: 1.1; }
-        .stat-card .label { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
-        .stat-card .icon { width: 38px; height: 38px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
-        .table { --bs-table-bg: transparent; color: #d4d8de; border-color: var(--border); margin-bottom: 0; }
-        .table thead th { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; border-bottom-color: var(--border); }
-        .nav-pills .nav-link { color: var(--muted); border-radius: 10px; font-weight: 600; }
-        .nav-pills .nav-link.active { background: linear-gradient(90deg, var(--brand), var(--brand2)); color: #fff; }
-        .cover-thumb { width: 42px; height: 56px; object-fit: cover; border-radius: 6px; background: #1d2026; }
-        .btn-brand { background: linear-gradient(90deg, var(--brand), var(--brand2)); border: 0; color: #fff; font-weight: 600; }
-        .btn-brand:hover { filter: brightness(1.08); color: #fff; }
-        .form-control, .form-select { background-color: #1d2026; border-color: #2a2e36; }
-        .modal-content { background: var(--surface); border: 1px solid var(--border); }
-        .log-box { background: #0b0c0f; border: 1px solid var(--border); border-radius: 8px; font-size: .78rem; white-space: pre-wrap; max-height: 160px; overflow: auto; }
-        .pulse { animation: pulse 1.4s ease-in-out infinite; }
-        @keyframes pulse { 50% { opacity: .45; } }
-        code { color: #ff8aa0; }
-    </style>
-</head>
-<body>
-
-<nav class="navbar sticky-top px-3 px-md-4 mb-4">
-    <div class="container-fluid px-0">
-        <a class="navbar-brand fw-bold d-flex align-items-center gap-2 text-white" href="/admin">
-            <span class="brand-icon"><i class="bi bi-play-fill text-white"></i></span>
-            <span>DramaBiliki <span class="text-secondary fw-normal">Bridge Admin</span></span>
-        </a>
-        <div class="d-flex align-items-center gap-2">
-            {% if sync_running %}
-            <span class="badge text-bg-warning pulse" id="syncBadge"><i class="bi bi-arrow-repeat"></i> Sync en cours</span>
-            {% endif %}
-            <a href="/admin/upload" class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"><i class="bi bi-cloud-arrow-up"></i> Téléverser</a>
-            <a href="/admin/users" class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"><i class="bi bi-people"></i> Utilisateurs</a>
-            <a href="/admin/app" class="btn btn-sm btn-outline-secondary d-none d-md-inline-block"><i class="bi bi-phone"></i> Application</a>
-            <span class="badge text-bg-secondary d-none d-sm-inline">v{{ version }}</span>
-            <a href="/docs" target="_blank" class="btn btn-sm btn-outline-secondary d-none d-sm-inline-block"><i class="bi bi-code-slash"></i> API</a>
-            <form method="post" action="/admin/logout" class="m-0">
-                <button class="btn btn-sm btn-outline-light" title="Déconnexion ({{ admin }})"><i class="bi bi-box-arrow-right"></i></button>
-            </form>
-        </div>
-    </div>
-</nav>
-
-<div class="container-fluid px-3 px-md-4 pb-5">
+{% extends "_base.html" %}
+{% block title %}Tableau de bord — DramaBiliki Admin{% endblock %}
+{% block page_title %}Tableau de bord{% endblock %}
+{% block page_sub %}Vue d'ensemble de votre plateforme{% endblock %}
+{% block page_actions %}
+    <a href="/admin/upload" class="btn btn-sm btn-outline-light d-none d-md-inline-flex align-items-center gap-1"><i class="bi bi-cloud-arrow-up"></i> Téléverser</a>
+    <a href="/admin/series/new" class="btn btn-sm btn-brand d-inline-flex align-items-center gap-1"><i class="bi bi-plus-lg"></i><span class="d-none d-sm-inline"> Nouvelle série</span></a>
+{% endblock %}
+{% block content %}
     {% for w in warnings %}
-    <div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle"></i> {{ w }}</div>
+    <div class="alert alert-warning py-2 small d-flex align-items-center gap-2"><i class="bi bi-exclamation-triangle"></i> {{ w }}</div>
     {% endfor %}
-
-    {% if message %}
-    <div class="alert alert-{{ level }} alert-dismissible fade show py-2" role="alert">
-        {{ message }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    {% endif %}
-
-    <!-- Stats -->
-    <div class="row g-3 mb-4">
-        {% set cards = [
-            ('Séries', stats.series_count, stats.active_series_count ~ ' actives', 'bi-film', '#ff2e55'),
-            ('Épisodes', stats.episodes_count, 'format vertical', 'bi-collection-play', '#a371f7'),
-            ('Appareils', stats.users_count, 'utilisateurs', 'bi-phone', '#3fb950'),
-            ('Favoris', stats.favorites_count, 'dans « Ma liste »', 'bi-heart', '#ff7a45'),
-            ('Progressions', stats.views_count, 'épisodes suivis', 'bi-graph-up', '#58a6ff'),
-            ('Dernière sync', stats.last_sync_status, stats.last_sync_time, 'bi-arrow-repeat', '#f0c040'),
-        ] %}
-        {% for label, value, sub, icon, color in cards %}
-        <div class="col-6 col-md-4 col-xl-2">
-            <div class="card stat-card p-3 h-100">
-                <div class="d-flex justify-content-between align-items-start mb-2">
-                    <div class="label">{{ label }}</div>
-                    <div class="icon" style="background: {{ color }}22; color: {{ color }}"><i class="bi {{ icon }}"></i></div>
+    <div class="tab-content">
+        <!-- ============ Overview ============ -->
+        <div class="tab-pane fade" id="tab-overview">
+            <div class="row g-3 mb-3">
+                {% set cards = [
+                    ('Séries', stats.series_count, stats.active_series_count ~ ' visibles', 'bi-film', '#ff2e55'),
+                    ('Épisodes', stats.episodes_count, 'au catalogue', 'bi-collection-play', '#a371f7'),
+                    ('Utilisateurs', stats.users_count, 'comptes et invités', 'bi-people', '#3fb950'),
+                    ('Favoris', stats.favorites_count, 'dans « Ma liste »', 'bi-heart', '#ff7a45'),
+                    ('Progressions', stats.views_count, 'épisodes suivis', 'bi-graph-up-arrow', '#58a6ff'),
+                    ('Dernière synchro', stats.last_sync_status, stats.last_sync_time, 'bi-arrow-repeat', '#f0c040'),
+                ] %}
+                {% for label, value, sub, icon, color in cards %}
+                <div class="col-6 col-md-4 col-xxl-2">
+                    <div class="card stat-card h-100">
+                        <div class="d-flex justify-content-between align-items-start mb-3">
+                            <div class="label">{{ label }}</div>
+                            <div class="icon" style="background: {{ color }}1f; color: {{ color }}"><i class="bi {{ icon }}"></i></div>
+                        </div>
+                        <div class="value">{{ value }}</div>
+                        <div class="text-secondary small mt-1">{{ sub }}</div>
+                    </div>
                 </div>
-                <div class="value">{{ value }}</div>
-                <div class="text-secondary small">{{ sub }}</div>
+                {% endfor %}
+            </div>
+
+            <div class="row g-3 mb-3">
+                {% for href, icon, color, title, sub in [
+                    ('/admin/series/new', 'bi-plus-square', '#ff2e55', 'Nouvelle série', 'Affiche, titres, genres'),
+                    ('/admin/upload', 'bi-cloud-arrow-up', '#58a6ff', 'Téléverser des vidéos', 'En lot, détection auto'),
+                    ('/admin?tab=telegram', 'bi-telegram', '#229ED9', 'Chaînes Telegram', tg_channels|length ~ ' chaîne(s) liée(s)'),
+                    ('/admin/app', 'bi-phone', '#3fb950', 'Application & pubs', 'APK, mises à jour, AdMob'),
+                ] %}
+                <div class="col-sm-6 col-xl-3">
+                    <a class="quick-action h-100" href="{{ href }}" {% if href.startswith('/admin?tab=') %}data-dash-tab="{{ href.split('=')[1] }}"{% endif %}>
+                        <span class="qa-icon" style="background: {{ color }}1f; color: {{ color }}"><i class="bi {{ icon }}"></i></span>
+                        <span class="lh-sm">
+                            <span class="fw-semibold d-block">{{ title }}</span>
+                            <span class="small text-secondary">{{ sub }}</span>
+                        </span>
+                        <i class="bi bi-chevron-right ms-auto text-secondary"></i>
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+
+            <div class="row g-3">
+                <div class="col-xl-7">
+                    <div class="card p-3 h-100">
+                        <div class="section-head">
+                            <h2 class="card-title-sm"><i class="bi bi-clock-history"></i> Dernières séries</h2>
+                            <a href="/admin?tab=series" data-dash-tab="series" class="btn btn-sm btn-outline-secondary">Tout voir</a>
+                        </div>
+                        {% if series_list %}
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <tbody>
+                                {% for s in series_list[:6] %}
+                                    <tr>
+                                        <td style="width:54px">
+                                            {% if s.local_cover %}<img src="/media/covers/{{ s.local_cover }}?w=300" class="cover-thumb" loading="lazy" alt="">
+                                            {% elif s.cover_url %}<img src="{{ s.cover_url }}" class="cover-thumb" loading="lazy" alt="">
+                                            {% else %}<div class="cover-thumb d-flex align-items-center justify-content-center"><i class="bi bi-image text-secondary"></i></div>{% endif %}
+                                        </td>
+                                        <td>
+                                            <a class="fw-semibold text-white text-decoration-none" href="/admin/series/{{ s.id }}">{{ s.title }}</a>
+                                            <div class="small text-secondary">{{ s.available_episodes }} épisode(s) · {{ s.source_type }}</div>
+                                        </td>
+                                        <td class="text-end">
+                                            <span class="badge {{ 'text-bg-success' if s.status == 'active' else 'text-bg-secondary' }}">{{ 'Visible' if s.status == 'active' else 'Masquée' }}</span>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="empty-state"><i class="bi bi-film"></i>Aucune série pour le moment.<br>
+                            <a href="/admin/series/new" class="btn btn-sm btn-brand mt-3">Créer une série</a></div>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="col-xl-5 d-flex flex-column gap-3">
+                    <div class="card p-3">
+                        <div class="section-head mb-2">
+                            <h2 class="card-title-sm"><i class="bi bi-telegram"></i> Telegram</h2>
+                            <a href="/admin?tab=telegram" data-dash-tab="telegram" class="btn btn-sm btn-outline-secondary">Gérer</a>
+                        </div>
+                        {% if tg.authorized %}
+                            <div class="d-flex align-items-center gap-2"><span class="status-dot"></span><span class="fw-semibold">{{ tg.account }}</span></div>
+                            <div class="small text-secondary mt-1">{{ tg_channels|length }} chaîne(s) liée(s) · {{ tg_channels|sum(attribute='videos_count') }} vidéo(s) importée(s)</div>
+                        {% else %}
+                            <div class="d-flex align-items-center gap-2"><span class="status-dot busy"></span><span class="text-secondary">Compte non connecté</span></div>
+                            <div class="small text-secondary mt-1">Connectez votre compte pour importer les vidéos de vos chaînes.</div>
+                        {% endif %}
+                    </div>
+                    <div class="card p-3 flex-grow-1">
+                        <div class="section-head mb-2">
+                            <h2 class="card-title-sm"><i class="bi bi-activity"></i> Activité de synchronisation</h2>
+                            <a href="/admin?tab=sync" data-dash-tab="sync" class="btn btn-sm btn-outline-secondary">Historique</a>
+                        </div>
+                        {% for run in sync_runs[:5] %}
+                        <div class="d-flex align-items-center gap-2 py-2 {{ 'border-top' if not loop.first }}" style="border-color: var(--border) !important">
+                            <i class="bi {{ 'bi-check-circle-fill text-success' if run.status == 'completed' else 'bi-arrow-repeat text-warning pulse' if run.status == 'running' else 'bi-x-circle-fill text-danger' }}"></i>
+                            <div class="flex-grow-1 small lh-sm">
+                                <div class="fw-semibold">{{ run.sync_type|capitalize }}{% if run.target_slug %} · {{ run.target_slug }}{% endif %}</div>
+                                <div class="text-secondary">{{ run.started_at.strftime('%d/%m %H:%M') if run.started_at else '' }} · {{ run.episodes_synced }} épisode(s){% if run.errors_count %} · <span class="text-danger">{{ run.errors_count }} erreur(s)</span>{% endif %}</div>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="empty-state py-3"><i class="bi bi-activity"></i>Aucune synchronisation.</div>
+                        {% endfor %}
+                    </div>
+                </div>
             </div>
         </div>
-        {% endfor %}
-    </div>
 
-    <!-- Tabs -->
-    <ul class="nav nav-pills gap-2 mb-3 flex-nowrap overflow-auto" role="tablist">
-        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-telegram" data-tab="telegram"><i class="bi bi-telegram"></i> Telegram</button></li>
-        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-series" data-tab="series"><i class="bi bi-film"></i> Séries</button></li>
-        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-banners" data-tab="banners"><i class="bi bi-images"></i> Bannières</button></li>
-        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-sync" data-tab="sync"><i class="bi bi-arrow-repeat"></i> Synchronisation</button></li>
-        <li class="nav-item"><button class="nav-link text-nowrap" data-bs-toggle="pill" data-bs-target="#tab-config" data-tab="config"><i class="bi bi-gear"></i> Configuration</button></li>
-    </ul>
-
-    <div class="tab-content">
 
         <!-- ============ Telegram ============ -->
         <div class="tab-pane fade" id="tab-telegram">
@@ -283,10 +309,6 @@
 
         <!-- ============ Series ============ -->
         <div class="tab-pane fade" id="tab-series">
-            <div class="d-flex flex-wrap gap-2 mb-3">
-                <a href="/admin/series/new" class="btn btn-sm btn-brand"><i class="bi bi-plus-lg"></i> Nouvelle série</a>
-                <a href="/admin/upload" class="btn btn-sm btn-outline-light"><i class="bi bi-cloud-arrow-up"></i> Téléverser des épisodes</a>
-            </div>
             <div class="card p-3">
                 <form method="get" action="/admin" class="row g-2 align-items-center mb-3">
                     <input type="hidden" name="tab" value="series">
@@ -591,20 +613,46 @@
             </div>
         </div>
     </div>
-</div>
+    </div>
+{% endblock %}
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}
 <script>
-    // Open the tab requested by the server (?tab=...) or the last one used.
+    // The sidebar drives the dashboard sections without reloading the page.
+    const SECTIONS = {
+        overview: ['Tableau de bord', "Vue d'ensemble de votre plateforme"],
+        series: ['Séries', 'Catalogue, visibilité et mise en avant'],
+        banners: ['Bannières', "Carrousel de l'écran d'accueil"],
+        telegram: ['Telegram', 'Compte lié et chaînes importées'],
+        sync: ['Synchronisation', 'Imports automatiques et historique'],
+        config: ['Configuration', 'Paramètres du serveur'],
+    };
+    function showSection(name, push) {
+        if (!SECTIONS[name]) name = 'overview';
+        document.querySelectorAll('.tab-content > .tab-pane').forEach(p => p.classList.toggle('show', p.id === 'tab-' + name));
+        document.querySelectorAll('.tab-content > .tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+        document.querySelectorAll('.side-link[data-dash-tab]').forEach(a => a.classList.toggle('active', a.dataset.dashTab === name));
+        document.getElementById('pageTitle').textContent = SECTIONS[name][0];
+        document.getElementById('pageSub').textContent = SECTIONS[name][1];
+        document.title = SECTIONS[name][0] + ' — DramaBiliki Admin';
+        try { localStorage.setItem('adminTab', name); } catch (e) {}
+        if (push) {
+            const url = new URL(location.href);
+            url.searchParams.set('tab', name);
+            ['msg', 'level'].forEach(k => url.searchParams.delete(k));
+            history.replaceState(null, '', url);
+            window.scrollTo({top: 0});
+        }
+    }
+    document.querySelectorAll('[data-dash-tab]').forEach(a => a.addEventListener('click', ev => {
+        ev.preventDefault();
+        showSection(a.dataset.dashTab, true);
+    }));
     (function () {
         const params = new URLSearchParams(location.search);
         let wanted = params.get('tab') || '{{ tab }}';
-        try { if (!params.get('tab')) wanted = localStorage.getItem('adminTab') || wanted; } catch (e) {}
-        const btn = document.querySelector(`[data-tab="${wanted}"]`) || document.querySelector('[data-tab="series"]');
-        bootstrap.Tab.getOrCreateInstance(btn).show();
-        document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('shown.bs.tab', () => {
-            try { localStorage.setItem('adminTab', b.dataset.tab); } catch (e) {}
-        }));
+        if (!params.get('tab')) { try { wanted = localStorage.getItem('adminTab') || wanted; } catch (e) {} }
+        showSection(wanted, false);
     })();
 
     // While a sync runs, poll its status and reload once it finishes.
@@ -627,5 +675,4 @@
     })();
     {% endif %}
 </script>
-</body>
-</html>
+{% endblock %}

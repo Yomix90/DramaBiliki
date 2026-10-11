@@ -1,12 +1,13 @@
 {% extends "_base.html" %}
-{% set active = 'dashboard' %}
+{% set active = 'series' if series else 'series_new' %}
 {% block title %}{{ series.title if series else 'Nouvelle série' }} — DramaBiliki Admin{% endblock %}
+{% block page_title %}{{ series.title if series else 'Nouvelle série' }}{% endblock %}
+{% block page_sub %}{% if series %}Série #{{ series.id }} · {{ series.available_episodes }} épisode(s) · source {{ series.source_type }}{% else %}Renseignez les informations puis ajoutez les épisodes{% endif %}{% endblock %}
+{% block page_actions %}
+    <a href="/admin?tab=series" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i><span class="d-none d-sm-inline"> Séries</span></a>
+    {% if series %}<a href="/admin/upload?series_id={{ series.id }}" class="btn btn-sm btn-brand"><i class="bi bi-cloud-arrow-up"></i><span class="d-none d-sm-inline"> Ajouter des épisodes</span></a>{% endif %}
+{% endblock %}
 {% block content %}
-<div class="d-flex align-items-center gap-2 mb-3">
-    <a href="/admin?tab=series" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i></a>
-    <h1 class="h5 fw-bold mb-0">{{ series.title if series else 'Nouvelle série' }}</h1>
-    {% if series %}<span class="badge text-bg-secondary">#{{ series.id }} · {{ series.source_type }}</span>{% endif %}
-</div>
 
 <div class="row g-3">
     <div class="col-xl-5">
@@ -73,9 +74,8 @@
     {% if series %}
     <div class="col-xl-7">
         <div class="card p-3">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h6 class="fw-bold mb-0">Épisodes ({{ episodes|length }})</h6>
-                <a href="/admin/upload?series_id={{ series.id }}" class="btn btn-sm btn-brand"><i class="bi bi-cloud-arrow-up"></i> Ajouter des épisodes</a>
+            <div class="section-head">
+                <h2 class="card-title-sm"><i class="bi bi-collection-play"></i> Épisodes ({{ episodes|length }})</h2>
             </div>
             <div class="table-responsive">
                 <table class="table table-hover align-middle">

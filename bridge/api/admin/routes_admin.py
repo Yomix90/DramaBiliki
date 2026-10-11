@@ -149,13 +149,14 @@ async def admin_dashboard(
         "users_count": db.query(User).count(),
         "favorites_count": db.query(Favorite).count(),
         "views_count": db.query(func.count(WatchHistory.id)).scalar() or 0,
-        "last_sync_status": last_run.status if last_run else "none",
+        "last_sync_status": {"completed": "Terminée", "failed": "Échec", "running": "En cours"}.get(
+            last_run.status, last_run.status) if last_run else "Aucune",
         "last_sync_time": last_run.started_at.strftime("%Y-%m-%d %H:%M") if last_run and last_run.started_at else "-",
     }
 
     tg_status = await telegram_service.status()
     tg_channels = db.query(TelegramChannel).order_by(TelegramChannel.id).all()
-    tab = tab or ("series" if tg_channels else "telegram")
+    tab = tab or "overview"
     linked_ids = {c.peer_id for c in tg_channels}
     tg_available = []
     if tg_dialogs and tg_status["authorized"]:
@@ -167,8 +168,6 @@ async def admin_dashboard(
     warnings = []
     if settings.admin_password_is_default:
         warnings.append("Le mot de passe admin par défaut est utilisé : définissez ADMIN_PASSWORD dans les variables d'environnement.")
-    if not settings.PUBLIC_BASE_URL:
-        warnings.append("PUBLIC_BASE_URL n'est pas défini : les URLs sont déduites de la requête (OK derrière Traefik/Dokploy).")
 
     return templates.TemplateResponse(
         request=request,

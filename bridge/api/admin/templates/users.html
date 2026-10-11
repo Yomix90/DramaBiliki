@@ -1,6 +1,8 @@
 {% extends "_base.html" %}
 {% set active = 'users' %}
 {% block title %}Utilisateurs — DramaBiliki Admin{% endblock %}
+{% block page_title %}Utilisateurs{% endblock %}
+{% block page_sub %}Comptes inscrits, invités, accès et publicité{% endblock %}
 {% block content %}
 <div class="row g-3 mb-3">
     {% for label, value, icon, color in [

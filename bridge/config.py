@@ -17,7 +17,7 @@ logger = logging.getLogger("bridge.config")
 class Settings(BaseSettings):
     # App info
     APP_NAME: str = "DramaBiliki Bridge"
-    APP_VERSION: str = "1.2.0"
+    APP_VERSION: str = "1.3.0"
     APP_ENV: str = os.getenv("APP_ENV", "production")
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     HOST: str = os.getenv("HOST", "0.0.0.0")
