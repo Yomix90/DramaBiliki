@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  bridge:
+    build: .
+    container_name: dramabiliki_bridge
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - HOST=0.0.0.0
+      - PORT=8000
+      - SECRET_KEY=change-this-in-production-to-a-random-secret
+      - SOURCE_BASE_URL=https://dramadunyam.com
+      - SOURCE_CDN_PRIMARY=cdn2.dramaflix.net
+      - SOURCE_CDN_FAILOVER=cdn.dramaflix.net
+      - DATABASE_URL=sqlite:////app/data/dramabiliki.db
+      - MEDIA_DIR=/app/media
+      - COVERS_DIR=/app/media/covers
+      - STREAM_CACHE_TTL_SECONDS=600
+      - PROXY_SEGMENTS=false
+      - SCANNER_MAX_CONCURRENT_REQUESTS=2
+    volumes:
+      - bridge_data:/app/data
+      - bridge_media:/app/media
+
+volumes:
+  bridge_data:
+  bridge_media:

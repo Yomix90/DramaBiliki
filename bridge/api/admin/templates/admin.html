@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="fr" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DramaBiliki Bridge — Panneau d'Administration</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        body { background-color: #0d0f12; color: #e1e7ec; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        .card { background-color: #161b22; border: 1px solid #30363d; border-radius: 10px; }
+        .table { color: #c9d1d9; border-color: #30363d; }
+        .table-dark { --bs-table-bg: #161b22; }
+        .nav-tabs .nav-link { color: #8b949e; border-color: transparent; }
+        .nav-tabs .nav-link.active { background-color: #161b22; color: #58a6ff; border-color: #30363d #30363d transparent; font-weight: 600; }
+        .badge-active { background-color: #238636; }
+        .badge-inactive { background-color: #da3633; }
+        .cover-thumb { width: 50px; height: 75px; object-fit: cover; border-radius: 4px; }
+        .stat-card { border-left: 4px solid #58a6ff; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg navbar-dark bg-black border-bottom border-secondary border-opacity-25 px-4 mb-4">
+    <div class="container-fluid">
+        <a class="navbar-brand fw-bold text-danger d-flex align-items-center gap-2" href="/admin">
+            <i class="bi bi-play-circle-fill"></i> DramaBiliki Bridge Admin
+        </a>
+        <div class="d-flex align-items-center gap-3">
+            <span class="badge bg-secondary">v1.0.0</span>
+            <a href="/docs" target="_blank" class="btn btn-sm btn-outline-info"><i class="bi bi-code-slash"></i> API Docs</a>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid px-4 pb-5">
+    {% if message %}
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+
+    <!-- Top Stats -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card p-3 shadow-sm">
+                <div class="text-secondary small text-uppercase fw-semibold">Séries en base</div>
+                <div class="fs-2 fw-bold text-white">{{ stats.series_count }}</div>
+                <div class="text-success small"><i class="bi bi-check-circle"></i> {{ stats.active_series_count }} actives</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card p-3 shadow-sm" style="border-left-color: #a371f7;">
+                <div class="text-secondary small text-uppercase fw-semibold">Total Épisodes</div>
+                <div class="fs-2 fw-bold text-white">{{ stats.episodes_count }}</div>
+                <div class="text-secondary small">Format vertical court</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card p-3 shadow-sm" style="border-left-color: #3fb950;">
+                <div class="text-secondary small text-uppercase fw-semibold">Utilisateurs / Appareils</div>
+                <div class="fs-2 fw-bold text-white">{{ stats.users_count }}</div>
+                <div class="text-secondary small">Appareils enregistrés</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card stat-card p-3 shadow-sm" style="border-left-color: #f0883e;">
+                <div class="text-secondary small text-uppercase fw-semibold">Dernière Synchronisation</div>
+                <div class="fs-5 fw-bold text-white mt-1">{{ stats.last_sync_status }}</div>
+                <div class="text-secondary small">{{ stats.last_sync_time }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <ul class="nav nav-tabs mb-4" id="adminTabs" role="tablist">
+        <li class="nav-item">
+            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-series"><i class="bi bi-film"></i> Gestion des Séries</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-banners"><i class="bi bi-images"></i> Bannières Accueil</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-sync"><i class="bi bi-arrow-repeat"></i> Scanner & Synchronisations</button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="adminTabsContent">
+        <!-- Series Tab -->
+        <div class="tab-pane fade show active" id="tab-series">
+            <div class="card p-3 shadow-sm mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold mb-0">Catalogue des Séries</h5>
+                    <form method="get" action="/admin" class="d-flex gap-2">
+                        <input type="text" name="q" value="{{ search_query }}" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="Rechercher par titre...">
+                        <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-search"></i></button>
+                    </form>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle">
+                        <thead>
+                            <tr class="text-secondary small">
+                                <th>Cover</th>
+                                <th>Titre & Plateforme</th>
+                                <th>Épisodes</th>
+                                <th>À la une</th>
+                                <th>Statut</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in series_list %}
+                            <tr>
+                                <td>
+                                    {% if s.local_cover %}
+                                    <img src="/media/covers/{{ s.local_cover }}" class="cover-thumb">
+                                    {% elif s.cover_url %}
+                                    <img src="{{ s.cover_url }}" class="cover-thumb">
+                                    {% else %}
+                                    <div class="cover-thumb bg-secondary d-flex align-items-center justify-content-center"><i class="bi bi-image"></i></div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="fw-bold text-white">{{ s.title }}</div>
+                                    <span class="badge bg-secondary small">{{ s.platform or "Short Drama" }}</span>
+                                    <span class="text-secondary small ms-2">ID: {{ s.source_id }}</span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-info text-dark">{{ s.available_episodes }} dispo</span> / {{ s.total_episodes }}
+                                </td>
+                                <td>
+                                    <form method="post" action="/admin/series/{{ s.id }}/toggle-featured" class="d-inline">
+                                        <button class="btn btn-sm {{ 'btn-warning' if s.is_featured else 'btn-outline-secondary' }}">
+                                            <i class="bi bi-star{{ '-fill' if s.is_featured else '' }}"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                                <td>
+                                    <form method="post" action="/admin/series/{{ s.id }}/toggle-status" class="d-inline">
+                                        <button class="btn btn-sm {{ 'btn-success' if s.status == 'active' else 'btn-danger' }}">
+                                            {{ 'Actif' if s.status == 'active' else 'Masqué' }}
+                                        </button>
+                                    </form>
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-light" data-bs-toggle="modal" data-bs-target="#editModal{{ s.id }}">
+                                        <i class="bi bi-pencil"></i> Éditer
+                                    </button>
+                                </td>
+                            </tr>
+
+                            <!-- Edit Modal -->
+                            <div class="modal fade" id="editModal{{ s.id }}" tabindex="-1">
+                                <div class="modal-dialog">
+                                    <div class="modal-content bg-dark text-white border-secondary">
+                                        <form method="post" action="/admin/series/{{ s.id }}/edit">
+                                            <div class="modal-header border-secondary">
+                                                <h5 class="modal-title">Éditer: {{ s.title }}</h5>
+                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <div class="mb-3">
+                                                    <label class="form-label">Titre Principal</label>
+                                                    <input type="text" name="title" class="form-control bg-black text-white border-secondary" value="{{ s.title }}">
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Description</label>
+                                                    <textarea name="description" rows="4" class="form-control bg-black text-white border-secondary">{{ s.description }}</textarea>
+                                                </div>
+                                                <div class="form-check form-switch mb-2">
+                                                    <input class="form-check-input" type="checkbox" name="is_popular" value="true" {{ 'checked' if s.is_popular else '' }}>
+                                                    <label class="form-check-label">Marquer comme Tendance (Trending)</label>
+                                                </div>
+                                                <div class="form-check form-switch">
+                                                    <input class="form-check-input" type="checkbox" name="is_new" value="true" {{ 'checked' if s.is_new else '' }}>
+                                                    <label class="form-check-label">Marquer comme Nouveauté</label>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer border-secondary">
+                                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                                                <button type="submit" class="btn btn-primary">Enregistrer</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Banners Tab -->
+        <div class="tab-pane fade" id="tab-banners">
+            <div class="card p-3 shadow-sm mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold mb-0">Bannières de l'Application</h5>
+                    <button class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#newBannerModal">
+                        <i class="bi bi-plus-lg"></i> Ajouter une bannière
+                    </button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle">
+                        <thead>
+                            <tr class="text-secondary small">
+                                <th>Image</th>
+                                <th>Titre & Sous-titre</th>
+                                <th>Cible Série</th>
+                                <th>Ordre</th>
+                                <th>Statut</th>
+                                <th class="text-end">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for b in banners %}
+                            <tr>
+                                <td><img src="{{ b.image_url }}" style="width: 120px; height: 60px; object-fit: cover; border-radius: 4px;"></td>
+                                <td>
+                                    <div class="fw-bold text-white">{{ b.title }}</div>
+                                    <div class="text-secondary small">{{ b.subtitle }}</div>
+                                </td>
+                                <td>{{ b.series.title if b.series else "Aucune" }}</td>
+                                <td>{{ b.sort_order }}</td>
+                                <td>
+                                    <span class="badge {{ 'bg-success' if b.is_active else 'bg-secondary' }}">
+                                        {{ 'Active' if b.is_active else 'Inactive' }}
+                                    </span>
+                                </td>
+                                <td class="text-end">
+                                    <form method="post" action="/admin/banners/{{ b.id }}/delete" class="d-inline">
+                                        <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Supprimer cette bannière ?')">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="6" class="text-center text-secondary py-4">Aucune bannière configurée. L'application génère automatiquement les bannières à partir des séries à la une.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sync Tab -->
+        <div class="tab-pane fade" id="tab-sync">
+            <div class="card p-3 shadow-sm mb-4">
+                <h5 class="fw-bold mb-3">Actions de Synchronisation</h5>
+                <div class="d-flex gap-3 mb-4">
+                    <form method="post" action="/admin/sync/trigger">
+                        <input type="hidden" name="sync_type" value="light">
+                        <button type="submit" class="btn btn-primary d-flex align-items-center gap-2">
+                            <i class="bi bi-lightning-charge"></i> Lancer Sync Légère (Nouveaux épisodes)
+                        </button>
+                    </form>
+                    <form method="post" action="/admin/sync/trigger">
+                        <input type="hidden" name="sync_type" value="full">
+                        <button type="submit" class="btn btn-outline-light d-flex align-items-center gap-2">
+                            <i class="bi bi-arrow-repeat"></i> Lancer Sync Complète (Catalogue)
+                        </button>
+                    </form>
+                </div>
+
+                <h6 class="fw-bold text-secondary text-uppercase small mb-3">Historique des Synchronisations</h6>
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle">
+                        <thead>
+                            <tr class="text-secondary small">
+                                <th>Date Début</th>
+                                <th>Type</th>
+                                <th>Statut</th>
+                                <th>Séries Traitées</th>
+                                <th>Épisodes</th>
+                                <th>Erreurs</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for run in sync_runs %}
+                            <tr>
+                                <td>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') if run.started_at else '-' }}</td>
+                                <td><span class="badge bg-secondary">{{ run.sync_type }}</span></td>
+                                <td>
+                                    <span class="badge {{ 'bg-success' if run.status == 'completed' else 'bg-warning text-dark' if run.status == 'running' else 'bg-danger' }}">
+                                        {{ run.status }}
+                                    </span>
+                                </td>
+                                <td>{{ run.series_discovered }}</td>
+                                <td>{{ run.episodes_synced }}</td>
+                                <td>{{ run.errors_count }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal New Banner -->
+<div class="modal fade" id="newBannerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-white border-secondary">
+            <form method="post" action="/admin/banners/create">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title">Créer une Bannière</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Titre</label>
+                        <input type="text" name="title" class="form-control bg-black text-white border-secondary" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Sous-titre</label>
+                        <input type="text" name="subtitle" class="form-control bg-black text-white border-secondary">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">URL de l'image</label>
+                        <input type="url" name="image_url" class="form-control bg-black text-white border-secondary" placeholder="https://..." required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Associer à la Série (ID)</label>
+                        <input type="number" name="target_series_id" class="form-control bg-black text-white border-secondary">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Ordre d'affichage</label>
+                        <input type="number" name="sort_order" class="form-control bg-black text-white border-secondary" value="0">
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="submit" class="btn btn-success">Créer la bannière</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Bootstrap 5 JS -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

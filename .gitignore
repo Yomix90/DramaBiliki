@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
+# Databases & local credentials
+*.db
+*.sqlite3
+.env
+cookies.txt
+
+# Media caches
+media/covers/*.webp
+!media/covers/.gitkeep
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/.pub-cache/
+mobile/.pub/
+mobile/build/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/build/
+mobile/ios/.symlinks/
+mobile/ios/Pods/
+mobile/ios/Podfile.lock
+mobile/windows/flutter/ephemeral/
+mobile/linux/flutter/ephemeral/
+mobile/macos/Flutter/ephemeral/
+
+# IDEs & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
