@@ -4,7 +4,7 @@ class AppConstants {
   static const String defaultBaseUrl = "http://2.29.96.137:8090";
 
   static const String appName = "DramaBiliki";
-  static const String appVersion = "1.1.0";
+  static const String appVersion = "1.2.0";
 
   // Paging
   static const int pageSize = 18;

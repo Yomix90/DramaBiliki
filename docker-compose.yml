@@ -19,6 +19,12 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       # Public HTTPS URL of the bridge, e.g. https://api.dramabiliki.com
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Telegram source (can also be set in Admin → Telegram)
+      TG_API_ID: ${TG_API_ID:-}
+      TG_API_HASH: ${TG_API_HASH:-}
+      TG_SYNC_INTERVAL_MINUTES: ${TG_SYNC_INTERVAL_MINUTES:-10}
+      TG_CACHE_VIDEOS: ${TG_CACHE_VIDEOS:-false}
+      LEGACY_SOURCE_ENABLED: ${LEGACY_SOURCE_ENABLED:-false}
       SOURCE_BASE_URL: ${SOURCE_BASE_URL:-https://dramadunyam.com}
       SOURCE_CDN_PRIMARY: ${SOURCE_CDN_PRIMARY:-cdn2.dramaflix.net}
       SOURCE_CDN_FAILOVER: ${SOURCE_CDN_FAILOVER:-cdn.dramaflix.net}

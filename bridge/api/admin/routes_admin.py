@@ -23,7 +23,9 @@ from bridge.api.admin.security import (
 )
 from bridge.config import settings
 from bridge.database import SessionLocal, get_db
-from bridge.models import Banner, Episode, Favorite, Series, SyncRun, User, WatchHistory
+from bridge.models import Banner, Episode, Favorite, Series, SyncRun, TelegramChannel, User, WatchHistory
+from bridge.telegram.client import telegram_service
+from bridge.telegram.sync import run_telegram_sync
 from bridge.source_session import get_session_values, save_session_values, test_source
 from bridge.streamer import stream_resolver
 from bridge.sync import SyncService, is_sync_running
@@ -110,7 +112,8 @@ async def admin_dashboard(
     page: int = 1,
     msg: Optional[str] = None,
     level: str = "success",
-    tab: str = "series",
+    tab: str = "",
+    tg_dialogs: int = 0,
     db: Session = Depends(get_db),
     admin: str = Depends(require_admin),
 ):
@@ -150,6 +153,17 @@ async def admin_dashboard(
         "last_sync_time": last_run.started_at.strftime("%Y-%m-%d %H:%M") if last_run and last_run.started_at else "-",
     }
 
+    tg_status = await telegram_service.status()
+    tg_channels = db.query(TelegramChannel).order_by(TelegramChannel.id).all()
+    tab = tab or ("series" if tg_channels else "telegram")
+    linked_ids = {c.peer_id for c in tg_channels}
+    tg_available = []
+    if tg_dialogs and tg_status["authorized"]:
+        try:
+            tg_available = [c for c in await telegram_service.list_channels() if c["peer_id"] not in linked_ids]
+        except Exception as e:
+            tg_status["error"] = str(e)
+
     warnings = []
     if settings.admin_password_is_default:
         warnings.append("Le mot de passe admin par défaut est utilisé : définissez ADMIN_PASSWORD dans les variables d'environnement.")
@@ -177,6 +191,10 @@ async def admin_dashboard(
             "warnings": warnings,
             "version": settings.APP_VERSION,
             "settings": settings,
+            "tg": tg_status,
+            "tg_channels": tg_channels,
+            "tg_available": tg_available,
+            "tg_dialogs": bool(tg_dialogs),
             "source_cookies": get_session_values()[0],
             "source_user_agent": get_session_values()[1],
         },
@@ -385,3 +403,172 @@ async def save_source_session(
 async def test_source_session(admin: str = Depends(require_admin)):
     code, summary = await test_source()
     return _redirect(f"Test de la source : {summary}", "success" if code == 200 else "danger", tab="config")
+
+
+# ---------------------------------------------------------------------------
+# Telegram
+# ---------------------------------------------------------------------------
+
+def _tg_redirect(msg: str, level: str = "success", **params) -> RedirectResponse:
+    return _redirect(msg, level, tab="telegram", **params)
+
+
+def _tg_error(e: Exception) -> str:
+    name = type(e).__name__
+    known = {
+        "PhoneNumberInvalidError": "Numéro de téléphone invalide (format international, ex. +33612345678).",
+        "PhoneCodeInvalidError": "Code incorrect.",
+        "PhoneCodeExpiredError": "Code expiré : demandez-en un nouveau.",
+        "PasswordHashInvalidError": "Mot de passe 2FA incorrect.",
+        "ApiIdInvalidError": "API ID / API hash invalides (vérifiez sur my.telegram.org).",
+        "FloodWaitError": f"Telegram limite les tentatives : réessayez dans {getattr(e, 'seconds', '?')} s.",
+        "UsernameNotOccupiedError": "Ce nom de chaîne n'existe pas.",
+        "ChannelPrivateError": "Chaîne privée : le compte doit d'abord la rejoindre.",
+    }
+    return known.get(name, f"{name}: {e}")
+
+
+def _start_telegram_sync(channel_id: Optional[int], full: bool = False) -> None:
+    task = asyncio.create_task(run_telegram_sync(channel_id, full=full))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+@router.post("/telegram/credentials")
+async def tg_credentials(api_id: str = Form(...), api_hash: str = Form(...), admin: str = Depends(require_admin)):
+    if not api_id.strip().isdigit() or len(api_hash.strip()) < 16:
+        return _tg_redirect("API ID (nombre) ou API hash invalide.", "danger")
+    telegram_service.save_credentials(api_id, api_hash)
+    await telegram_service.reset()
+    return _tg_redirect("Identifiants API enregistrés. Connectez maintenant votre compte.")
+
+
+@router.post("/telegram/send-code")
+async def tg_send_code(phone: str = Form(...), admin: str = Depends(require_admin)):
+    phone = phone.strip().replace(" ", "")
+    try:
+        await telegram_service.send_code(phone)
+    except Exception as e:
+        return _tg_redirect(_tg_error(e), "danger")
+    return _tg_redirect(f"Code envoyé à {phone} (dans l'app Telegram ou par SMS).", "info")
+
+
+@router.post("/telegram/sign-in")
+async def tg_sign_in(code: str = Form(""), password: str = Form(""), admin: str = Depends(require_admin)):
+    from telethon import errors as tg_errors
+    try:
+        await telegram_service.sign_in(code=code, password=password)
+    except tg_errors.SessionPasswordNeededError:
+        return _tg_redirect("Ce compte a la validation en deux étapes : entrez votre mot de passe Telegram.", "warning")
+    except Exception as e:
+        return _tg_redirect(_tg_error(e), "danger")
+    return _tg_redirect("Compte Telegram connecté. Ajoutez maintenant vos chaînes.", tg_dialogs=1)
+
+
+@router.post("/telegram/logout")
+async def tg_logout(admin: str = Depends(require_admin)):
+    await telegram_service.log_out()
+    return _tg_redirect("Compte Telegram déconnecté.", "info")
+
+
+@router.post("/telegram/channels/add")
+async def tg_add_channel(
+    ref: str = Form(...),
+    mode: str = Form("caption"),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    from telethon import utils as tg_utils
+    try:
+        entity = await telegram_service.resolve_channel(ref)
+    except Exception as e:
+        return _tg_redirect(_tg_error(e), "danger", tg_dialogs=1)
+
+    peer_id = tg_utils.get_peer_id(entity)
+    channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == peer_id).first()
+    if channel is None:
+        channel = TelegramChannel(peer_id=peer_id)
+        db.add(channel)
+    channel.access_hash = entity.access_hash
+    channel.title = entity.title or ""
+    channel.username = entity.username or ""
+    channel.mode = mode if mode in ("caption", "single") else "caption"
+    channel.enabled = True
+    db.commit()
+
+    if not is_sync_running():
+        _start_telegram_sync(channel.id)
+        return _tg_redirect(f"Chaîne « {channel.title} » ajoutée : import des vidéos en cours…", "info")
+    return _tg_redirect(f"Chaîne « {channel.title} » ajoutée : elle sera importée à la prochaine synchro.")
+
+
+@router.post("/telegram/channels/{channel_id}/mode")
+async def tg_channel_mode(channel_id: int, mode: str = Form(...), db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    channel = db.get(TelegramChannel, channel_id)
+    if channel:
+        channel.mode = mode if mode in ("caption", "single") else "caption"
+        db.commit()
+    return _tg_redirect("Mode mis à jour (appliqué aux prochaines vidéos ; « Réimporter » pour tout reclasser).")
+
+
+@router.post("/telegram/channels/{channel_id}/toggle")
+async def tg_channel_toggle(channel_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    channel = db.get(TelegramChannel, channel_id)
+    if not channel:
+        return _tg_redirect("Chaîne introuvable.", "danger")
+    channel.enabled = not channel.enabled
+    db.query(Series).filter(Series.tg_channel_id == channel.id).update(
+        {Series.status: "active" if channel.enabled else "inactive"}, synchronize_session=False
+    )
+    db.commit()
+    return _tg_redirect("Chaîne activée" if channel.enabled else "Chaîne désactivée (ses séries sont masquées)")
+
+
+@router.post("/telegram/channels/{channel_id}/sync")
+async def tg_channel_sync(channel_id: int, admin: str = Depends(require_admin)):
+    if is_sync_running():
+        return _tg_redirect("Une synchronisation est déjà en cours.", "warning")
+    _start_telegram_sync(channel_id)
+    return _tg_redirect("Synchronisation de la chaîne lancée.", "info")
+
+
+@router.post("/telegram/channels/{channel_id}/reimport")
+async def tg_channel_reimport(channel_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Deletes the channel's series/episodes and imports everything again (after a mode change)."""
+    if is_sync_running():
+        return _tg_redirect("Une synchronisation est déjà en cours.", "warning")
+    channel = db.get(TelegramChannel, channel_id)
+    if not channel:
+        return _tg_redirect("Chaîne introuvable.", "danger")
+    for series in db.query(Series).filter(Series.tg_channel_id == channel.id).all():
+        db.delete(series)
+    channel.last_message_id = 0
+    channel.videos_count = 0
+    db.commit()
+    _start_telegram_sync(channel_id, full=True)
+    return _tg_redirect(f"Réimport complet de « {channel.title} » lancé.", "info")
+
+
+@router.post("/telegram/channels/{channel_id}/delete")
+async def tg_channel_delete(
+    channel_id: int,
+    delete_series: str = Form(""),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    channel = db.get(TelegramChannel, channel_id)
+    if channel:
+        if delete_series == "1":
+            for series in db.query(Series).filter(Series.tg_channel_id == channel.id).all():
+                db.delete(series)
+        db.delete(channel)
+        db.commit()
+    return _tg_redirect("Chaîne retirée.")
+
+
+@router.post("/telegram/sync")
+async def tg_sync_all(admin: str = Depends(require_admin)):
+    if is_sync_running():
+        return _tg_redirect("Une synchronisation est déjà en cours.", "warning")
+    _start_telegram_sync(None)
+    return _tg_redirect("Synchronisation de toutes les chaînes lancée.", "info")

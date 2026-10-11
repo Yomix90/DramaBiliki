@@ -17,7 +17,7 @@ logger = logging.getLogger("bridge.config")
 class Settings(BaseSettings):
     # App info
     APP_NAME: str = "DramaBiliki Bridge"
-    APP_VERSION: str = "1.1.0"
+    APP_VERSION: str = "1.2.0"
     APP_ENV: str = os.getenv("APP_ENV", "production")
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     HOST: str = os.getenv("HOST", "0.0.0.0")
@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     # http://user:pass@host:port or socks5://host:port. Needed when the source
     # (behind Cloudflare) blocks the VPS datacenter IP with HTTP 403.
     SOURCE_PROXY: str = os.getenv("SOURCE_PROXY", "").strip()
+
+    # Telegram source (API credentials from https://my.telegram.org → API development tools).
+    # They can also be entered in the admin panel.
+    TG_API_ID: str = os.getenv("TG_API_ID", "").strip()
+    TG_API_HASH: str = os.getenv("TG_API_HASH", "").strip()
+    TG_SYNC_INTERVAL_MINUTES: int = int(os.getenv("TG_SYNC_INTERVAL_MINUTES", "10"))
+    # Keep a copy of every streamed video on disk (faster seeking/replays, uses disk space).
+    TG_CACHE_VIDEOS: bool = os.getenv("TG_CACHE_VIDEOS", "false").lower() == "true"
+
+    # The legacy web source (dramadunyam.com) is disabled by default: Telegram is the content source.
+    LEGACY_SOURCE_ENABLED: bool = os.getenv("LEGACY_SOURCE_ENABLED", "false").lower() == "true"
 
     # Persistent data (database, generated secret)
     DATA_DIR: Path = Path(os.getenv("DATA_DIR", str(BASE_DIR)))

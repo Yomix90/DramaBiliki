@@ -1,15 +1,19 @@
+import asyncio
 import logging
+import re
 import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from telethon import errors as tg_errors
 from sqlalchemy.orm import Session
 import httpx
 
 from bridge.config import settings
 from bridge.source_session import source_headers
 from bridge.database import get_db
-from bridge.models import Series
+from bridge.models import Episode, Series
 from bridge.streamer import stream_resolver
+from bridge.telegram.client import telegram_service
 from bridge.urls import public_base_url
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,7 @@ async def get_subtitles(
 ):
     """Returns WebVTT subtitles for the episode."""
     source_id = series_id_or_source
+    series = None
     if series_id_or_source.isdigit():
         series = db.query(Series).filter(
             (Series.id == int(series_id_or_source)) | (Series.source_id == series_id_or_source)
@@ -89,7 +94,10 @@ async def get_subtitles(
         if series:
             source_id = series.source_id
 
-    vtt = await stream_resolver.get_subtitles_vtt(source_id, ep, lang=lang)
+    if series_id_or_source.isdigit() and series and series.source_type == "telegram":
+        vtt = "WEBVTT\n\n"
+    else:
+        vtt = await stream_resolver.get_subtitles_vtt(source_id, ep, lang=lang)
     return Response(
         content=vtt,
         media_type="text/vtt; charset=utf-8",
@@ -131,4 +139,130 @@ async def proxy_segment(u: str = Query(..., description="Target segment URL")):
         stream_generator(),
         media_type="video/MP2T" if ".ts" in u else "video/mp4",
         headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Telegram videos (progressive MP4 with HTTP Range support)
+# ---------------------------------------------------------------------------
+
+_RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
+_caching: set = set()
+
+
+def _cache_path(episode: Episode):
+    return settings.MEDIA_DIR / "videos" / f"{abs(episode.tg_peer_id)}_{episode.tg_message_id}.mp4"
+
+
+async def _cache_video(message, path) -> None:
+    """Downloads the whole video once in the background (TG_CACHE_VIDEOS=true)."""
+    key = str(path)
+    if key in _caching:
+        return
+    _caching.add(key)
+    part = path.with_suffix(".part")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        client = await telegram_service.authorized_client()
+        if client is not None:
+            await client.download_media(message, file=str(part))
+            part.replace(path)
+    except Exception as e:
+        logger.warning(f"Could not cache Telegram video {path.name}: {e}")
+        part.unlink(missing_ok=True)
+    finally:
+        _caching.discard(key)
+
+
+def _parse_range(header: str, size: int):
+    """Returns (start, end) inclusive, or None when the header is absent/invalid."""
+    match = _RANGE_RE.fullmatch((header or "").strip())
+    if not match or size <= 0:
+        return None
+    first, last = match.groups()
+    if first == "" and last == "":
+        return None
+    if first == "":  # suffix range: last N bytes
+        start, end = max(0, size - int(last)), size - 1
+    else:
+        start = int(first)
+        end = min(int(last), size - 1) if last else size - 1
+    if start > end or start >= size:
+        raise HTTPException(status_code=416, detail="Range not satisfiable", headers={"Content-Range": f"bytes */{size}"})
+    return start, end
+
+
+@router.get("/stream/{series_id_or_slug}/{ep_file}")
+async def stream_telegram_episode(
+    series_id_or_slug: str,
+    ep_file: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Streams the episode video posted in a Telegram channel, e.g. /stream/12/3.mp4."""
+    match = re.fullmatch(r"(\d{1,5})\.mp4", ep_file)
+    if not match:
+        raise HTTPException(status_code=404, detail="Not found")
+    ep_num = int(match.group(1))
+
+    query = db.query(Series)
+    series = (
+        query.filter(Series.id == int(series_id_or_slug)).first()
+        if series_id_or_slug.isdigit()
+        else query.filter(Series.slug == series_id_or_slug).first()
+    )
+    if not series:
+        raise HTTPException(status_code=404, detail="Series not found")
+    episode = db.query(Episode).filter(Episode.series_id == series.id, Episode.num == ep_num).first()
+    if not episode or not episode.tg_message_id:
+        raise HTTPException(status_code=404, detail="Episode not available")
+
+    cached = _cache_path(episode)
+    if cached.is_file():
+        return FileResponse(cached, media_type=episode.mime_type or "video/mp4", headers={"Cache-Control": "public, max-age=86400"})
+
+    access_hash = series.telegram_channel.access_hash if series.telegram_channel else None
+    try:
+        message = await telegram_service.get_message(episode.tg_peer_id, access_hash, episode.tg_message_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Video removed from the channel")
+    except Exception as e:
+        logger.error(f"Telegram stream unavailable for {series.id}/{ep_num}: {e}")
+        raise HTTPException(status_code=503, detail="Telegram source unavailable")
+
+    size = message.file.size or episode.file_size or 0
+    byte_range = _parse_range(request.headers.get("range", ""), size)
+    start, end = byte_range if byte_range else (0, size - 1)
+
+    if settings.TG_CACHE_VIDEOS:
+        asyncio.create_task(_cache_video(message, cached))
+
+    async def body():
+        nonlocal message
+        position = start
+        for attempt in range(2):
+            try:
+                async for chunk in telegram_service.iter_bytes(message, position, end):
+                    position += len(chunk)
+                    yield chunk
+                return
+            except tg_errors.FileReferenceExpiredError:
+                if attempt:
+                    raise
+                message = await telegram_service.get_message(
+                    episode.tg_peer_id, access_hash, episode.tg_message_id, refresh=True
+                )
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(end - start + 1),
+        "Cache-Control": "public, max-age=3600",
+    }
+    if byte_range:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(
+        body(),
+        status_code=206 if byte_range else 200,
+        media_type=episode.mime_type or "video/mp4",
+        headers=headers,
     )

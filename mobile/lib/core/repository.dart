@@ -79,7 +79,8 @@ class DramaRepository {
     });
   }
 
-  Uri streamUri(int seriesId, int episodeNum) => Uri.parse('$baseUrl/stream/$seriesId/$episodeNum/master.m3u8');
+  /// Progressive MP4 served by the bridge from the Telegram channel (supports HTTP Range).
+  Uri streamUri(int seriesId, int episodeNum) => Uri.parse('$baseUrl/stream/$seriesId/$episodeNum.mp4');
 
   /// Loads the WebVTT subtitles of an episode; an empty file simply shows nothing.
   Future<ClosedCaptionFile> subtitles(int seriesId, int episodeNum) async {

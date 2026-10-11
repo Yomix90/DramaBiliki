@@ -45,26 +45,8 @@ async def download_and_cache_cover(
             logger.warning(f"Failed to download cover from {cover_url}: HTTP {response.status_code}")
             return None
 
-        image_data = response.content
-        image = Image.open(io.BytesIO(image_data))
-        
-        # Convert to RGB (in case of RGBA or palette mode)
-        if image.mode in ("RGBA", "P", "LA"):
-            image = image.convert("RGBA")
-        else:
-            image = image.convert("RGB")
-
-        # Save main WebP
-        image.save(target_path, "WEBP", quality=85, method=6)
-
-        # Generate 300px and 600px widths keeping aspect ratio
-        for width in [300, 600]:
-            if image.width > width:
-                height = int(image.height * (width / image.width))
-                resized = image.resize((width, height), Image.Resampling.LANCZOS)
-                variant_path = settings.COVERS_DIR / f"{source_id}_{width}.webp"
-                resized.save(variant_path, "WEBP", quality=82)
-
+        if not save_cover_image(source_id, response.content):
+            return None
         logger.info(f"Successfully cached cover for series {source_id} -> {filename}")
         return filename
 
@@ -74,6 +56,24 @@ async def download_and_cache_cover(
     finally:
         if own_client:
             await client.aclose()
+
+
+def save_cover_image(source_id: str, image_data: bytes) -> Optional[str]:
+    """Converts raw image bytes to '<source_id>.webp' plus 300/600px variants. Returns the filename."""
+    filename = f"{source_id}.webp"
+    try:
+        image = Image.open(io.BytesIO(image_data))
+        image = image.convert("RGBA") if image.mode in ("RGBA", "P", "LA") else image.convert("RGB")
+        image.save(settings.COVERS_DIR / filename, "WEBP", quality=85, method=6)
+        for width in [300, 600]:
+            if image.width > width:
+                height = int(image.height * (width / image.width))
+                resized = image.resize((width, height), Image.Resampling.LANCZOS)
+                resized.save(settings.COVERS_DIR / f"{source_id}_{width}.webp", "WEBP", quality=82)
+        return filename
+    except Exception as e:
+        logger.error(f"Error processing cover image for {source_id}: {e}")
+        return None
 
 
 def get_cover_path(source_id: str, size: Optional[int] = None) -> Optional[Path]:

@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 
 from bridge.config import settings
 from bridge.database import SessionLocal, init_db
-from bridge.scheduler import start_scheduler, startup_sync_if_empty, stop_scheduler
+from bridge.scheduler import scheduled_telegram_sync, start_scheduler, startup_sync_if_empty, stop_scheduler
 from bridge.sync import mark_interrupted_runs
+from bridge.telegram.client import telegram_service
 from bridge.streamer import stream_resolver
 from bridge.api.v1.routes_home import router as home_router
 from bridge.api.v1.routes_series import router as series_router
@@ -42,8 +43,10 @@ async def lifespan(app: FastAPI):
             start_scheduler()
         except Exception as e:
             logger.warning(f"Could not start background scheduler: {e}")
-        if settings.SYNC_ON_STARTUP_IF_EMPTY:
+        if settings.SYNC_ON_STARTUP_IF_EMPTY and settings.LEGACY_SOURCE_ENABLED:
             startup_task = asyncio.create_task(startup_sync_if_empty())
+        else:
+            startup_task = asyncio.create_task(scheduled_telegram_sync())
     yield
     # Shutdown
     logger.info("Stopping DramaBiliki Bridge Server...")
@@ -54,6 +57,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     await stream_resolver.close()
+    await telegram_service.close()
 
 app = FastAPI(
     title=settings.APP_NAME,

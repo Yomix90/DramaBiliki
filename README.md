@@ -149,6 +149,26 @@ flutter build apk --release
 
 ---
 
+## 📡 Content source: Telegram channels
+
+Videos come from your own Telegram channels. The bridge logs in with a **Telegram user
+account** (bots cannot read a channel's history nor download files over 20 MB), imports
+each video as an episode and streams it to the app as a regular MP4 (with seeking).
+
+1. Get an `api_id` / `api_hash` on [my.telegram.org](https://my.telegram.org) → *API development tools*.
+2. **Admin → Telegram**: enter them, then your phone number, the login code
+   (and your 2FA password if enabled).
+3. Add a channel (`@name`, `t.me` link, or pick it from your list) and choose a mode:
+   - **Légendes (caption)**: each caption names the series and episode —
+     `My Drama - Episode 3`, `My Drama EP3`, `#MyDrama #3`, `الحلقة 3`, `3/80`…
+   - **Une série (single)**: the whole channel is one series, episodes in posting order.
+4. New posts are imported every `TG_SYNC_INTERVAL_MINUTES` (10 min). Each channel also
+   becomes a category in the app; the first video's thumbnail is used as the cover.
+
+The account session is stored in the database (data volume): treat that volume as secret.
+
+---
+
 ## 🌐 Part 3: VPS Deployment with Dokploy (recommended)
 
 The repository ships a production `Dockerfile` (healthcheck, persistent volumes) and a Dokploy-compatible `docker-compose.yml`. Dokploy builds it from GitHub and

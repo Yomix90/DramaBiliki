@@ -1,7 +1,7 @@
 import datetime
 from typing import Dict, Any, Optional
 from sqlalchemy import (
-    Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, Table, JSON
+    BigInteger, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, Table, JSON
 )
 from sqlalchemy.orm import relationship
 from bridge.database import Base
@@ -35,6 +35,8 @@ class Series(Base):
     
     # Metadata
     platform = Column(String(64), index=True, default="")  # e.g. DramaBox, ShortMax, ReelShort
+    source_type = Column(String(32), default="web", index=True)  # web (legacy site) | telegram
+    tg_channel_id = Column(Integer, ForeignKey("telegram_channels.id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String(32), default="active", index=True)  # active, inactive
     is_featured = Column(Boolean, default=False, index=True)
     is_popular = Column(Boolean, default=False, index=True)
@@ -56,6 +58,7 @@ class Series(Base):
     genres = relationship("Genre", secondary=series_genres, back_populates="series")
     favorites = relationship("Favorite", back_populates="series", cascade="all, delete-orphan")
     history_entries = relationship("WatchHistory", back_populates="series", cascade="all, delete-orphan")
+    telegram_channel = relationship("TelegramChannel")
 
     def get_title(self, lang: str = "en") -> str:
         if self.titles_json and lang in self.titles_json and self.titles_json[lang]:
@@ -87,6 +90,12 @@ class Episode(Base):
     local_thumbnail = Column(String(255), default="")
     
     is_free = Column(Boolean, default=True)  # All episodes free or configurable by admin
+
+    # Telegram source (when the episode is a video posted in a channel)
+    tg_peer_id = Column(BigInteger, nullable=True, index=True)
+    tg_message_id = Column(BigInteger, nullable=True, index=True)
+    file_size = Column(BigInteger, default=0)
+    mime_type = Column(String(64), default="")
     
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -195,3 +204,22 @@ class AppConfig(Base):
     value = Column(Text, nullable=False)
     description = Column(String(255), default="")
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class TelegramChannel(Base):
+    """A Telegram channel whose videos are imported as series/episodes."""
+    __tablename__ = "telegram_channels"
+
+    id = Column(Integer, primary_key=True, index=True)
+    peer_id = Column(BigInteger, unique=True, index=True, nullable=False)  # e.g. -1001234567890
+    access_hash = Column(BigInteger, nullable=True)
+    title = Column(String(255), default="")
+    username = Column(String(64), default="")
+    # caption: series & episode parsed from each caption | single: the whole channel is one series
+    mode = Column(String(16), default="caption")
+    enabled = Column(Boolean, default=True)
+    last_message_id = Column(BigInteger, default=0)
+    videos_count = Column(Integer, default=0)
+    last_synced_at = Column(DateTime, nullable=True)
+    last_error = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

@@ -50,9 +50,29 @@ async def startup_sync_if_empty():
         db.close()
 
 
+async def scheduled_telegram_sync():
+    """Imports new videos posted in the linked Telegram channels."""
+    from bridge.telegram.client import telegram_service
+    from bridge.telegram.sync import run_telegram_sync
+    try:
+        if await telegram_service.authorized_client() is None:
+            return
+        await run_telegram_sync()
+    except Exception as e:
+        logger.error(f"Error in scheduled Telegram sync: {e}")
+
+
 def start_scheduler():
     """Initializes and starts the background job scheduler."""
-    if not scheduler.running:
+    if scheduler.running:
+        return
+    scheduler.add_job(
+        scheduled_telegram_sync,
+        trigger=IntervalTrigger(minutes=settings.TG_SYNC_INTERVAL_MINUTES),
+        id="job_telegram_sync",
+        replace_existing=True,
+    )
+    if settings.LEGACY_SOURCE_ENABLED:
         scheduler.add_job(
             scheduled_light_sync,
             trigger=IntervalTrigger(minutes=settings.LIGHT_SYNC_INTERVAL_MINUTES),
@@ -65,8 +85,8 @@ def start_scheduler():
             id="job_full_sync",
             replace_existing=True,
         )
-        scheduler.start()
-        logger.info("Background sync scheduler successfully started.")
+    scheduler.start()
+    logger.info("Background sync scheduler successfully started.")
 
 def stop_scheduler():
     if scheduler.running:
