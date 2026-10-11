@@ -1,7 +1,7 @@
 class AppConstants {
   // Bridge API URL (Change to your VPS URL e.g. https://api.dramabiliki.com or LAN IP for testing)
   // When testing on Android Emulator, 10.0.2.2 points to host machine. For real device/VPS, use domain or server IP.
-  static const String defaultBaseUrl = "http://10.0.2.2:8000";
+  static const String defaultBaseUrl = "http://2.29.96.137:8090";
 
   static const String appName = "DramaBiliki";
   static const String appVersion = "1.1.0";
