@@ -6,7 +6,7 @@ services:
     container_name: dramabiliki_bridge
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8090:8090"
     environment:
       - APP_ENV=production
       - HOST=0.0.0.0
