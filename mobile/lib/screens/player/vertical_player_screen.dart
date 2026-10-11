@@ -1,0 +1,729 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:video_player/video_player.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
+import '../../core/app_theme.dart';
+import '../../core/localization.dart';
+import '../../core/repository.dart';
+import '../../models/series.dart';
+import '../../providers/app_providers.dart';
+import '../../widgets/episode_sheet.dart';
+import '../../widgets/state_views.dart';
+import '../../widgets/video_pool.dart';
+import '../../widgets/video_surface.dart';
+
+/// ReelShort-style immersive player: one episode per page, swipe up for the next one.
+class VerticalPlayerScreen extends ConsumerWidget {
+  final int seriesId;
+  final String seriesTitle;
+  final int initialEpisodeNum;
+
+  /// Where to start the initial episode; defaults to the saved progress.
+  final int? startPositionSeconds;
+
+  const VerticalPlayerScreen({
+    super.key,
+    required this.seriesId,
+    required this.seriesTitle,
+    this.initialEpisodeNum = 1,
+    this.startPositionSeconds,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final loc = AppLocale(ref.watch(localeProvider));
+    final detailAsync = ref.watch(seriesDetailProvider('$seriesId'));
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: detailAsync.when(
+          data: (detail) => _EpisodePager(
+            detail: detail,
+            initialEpisode: initialEpisodeNum,
+            startPositionSeconds: startPositionSeconds,
+          ),
+          loading: () => const _PlayerShell(child: CircularProgressIndicator(color: AppTheme.primary)),
+          error: (_, _) => _PlayerShell(
+            child: ErrorView(
+              message: loc.t('load_error'),
+              retryLabel: loc.t('retry'),
+              onRetry: () => ref.invalidate(seriesDetailProvider('$seriesId')),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerShell extends StatelessWidget {
+  final Widget child;
+
+  const _PlayerShell({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Center(child: child),
+        SafeArea(
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _EpisodePager extends ConsumerStatefulWidget {
+  final SeriesDetailModel detail;
+  final int initialEpisode;
+  final int? startPositionSeconds;
+
+  const _EpisodePager({required this.detail, required this.initialEpisode, this.startPositionSeconds});
+
+  @override
+  ConsumerState<_EpisodePager> createState() => _EpisodePagerState();
+}
+
+class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindingObserver {
+  late final PageController _pageController;
+  late final VideoPool _pool;
+  late final DramaRepository _repo;
+  late int _current;
+
+  double _speed = 1.0;
+  bool _boosted = false;
+  bool _userPaused = false;
+  bool _inForeground = true;
+  bool _descExpanded = false;
+  bool _showEndHint = false;
+  Offset? _heartPos;
+  int _heartKey = 0;
+  Timer? _syncTimer;
+
+  /// Episodes whose end was already handled (avoids re-triggering autoplay).
+  final Set<int> _completed = {};
+
+  /// Episodes finished during this session (merged with the server's watched flags).
+  final Set<int> _watched = {};
+
+  SeriesDetailModel get _detail => widget.detail;
+  int get _seriesId => _detail.id;
+  int get _total => _detail.availableEpisodes > 0 ? _detail.availableEpisodes : _detail.episodes.length;
+
+  String _key(int ep) => 'ep$ep';
+  VideoPlayerController? get _currentController => _pool[_key(_current)];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WakelockPlus.enable();
+    _repo = ref.read(repositoryProvider);
+    _pool = VideoPool(onChanged: () {
+      if (mounted) setState(() {});
+    });
+
+    _current = widget.initialEpisode.clamp(1, _total > 0 ? _total : 1);
+    _pageController = PageController(initialPage: _current - 1);
+    _startEpisode(_current, seekSeconds: widget.startPositionSeconds ?? _resumePointFor(_current));
+
+    _syncTimer = Timer.periodic(const Duration(seconds: 10), (_) => _saveProgress());
+  }
+
+  @override
+  void dispose() {
+    _saveProgress();
+    _syncTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    WakelockPlus.disable();
+    _pageController.dispose();
+    _pool.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _inForeground = true;
+      if (!_userPaused) _currentController?.play();
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _inForeground = false;
+      _currentController?.pause();
+      _saveProgress();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Playback
+  // ---------------------------------------------------------------------------
+
+  int? _resumePointFor(int ep) {
+    for (final e in _detail.episodes) {
+      if (e.num == ep) return (!e.isWatched && e.watchedSeconds > 5) ? e.watchedSeconds : null;
+    }
+    return null;
+  }
+
+  Future<VideoPlayerController?> _ensure(int ep) {
+    return _pool.ensure(
+      _key(ep),
+      _repo.streamUri(_seriesId, ep),
+      captions: () => _repo.subtitles(_seriesId, ep),
+    );
+  }
+
+  Future<void> _startEpisode(int ep, {int? seekSeconds}) async {
+    final c = await _ensure(ep);
+    if (!mounted || c == null || ep != _current) return;
+
+    // Only seek fresh controllers: a page swiped back to keeps its own position.
+    if (seekSeconds != null && seekSeconds > 0 && c.value.position < const Duration(seconds: 1)) {
+      final dur = c.value.duration.inSeconds;
+      if (dur == 0 || seekSeconds < dur - 5) await c.seekTo(Duration(seconds: seekSeconds));
+    } else if (c.value.isCompleted) {
+      await c.seekTo(Duration.zero);
+    }
+    if (!mounted || ep != _current) return;
+
+    await c.setPlaybackSpeed(_boosted ? 2.0 : _speed);
+    c.removeListener(_onTick);
+    c.addListener(_onTick);
+    if (!_userPaused && _inForeground) await c.play();
+
+    _preload(ep + 1);
+  }
+
+  void _preload(int ep) {
+    if (ep > _total || ref.read(settingsProvider).dataSaver) return;
+    _ensure(ep);
+  }
+
+  void _onTick() {
+    final c = _currentController;
+    if (c == null || _completed.contains(_current)) return;
+    final v = c.value;
+    final nearEnd = v.duration > Duration.zero && v.position >= v.duration - const Duration(milliseconds: 300);
+    if (v.isCompleted || (nearEnd && !v.isPlaying)) {
+      _completed.add(_current);
+      _onEpisodeCompleted();
+    }
+  }
+
+  void _onEpisodeCompleted() {
+    _watched.add(_current);
+    _saveProgress(completed: true);
+    if (_current < _total) {
+      if (ref.read(settingsProvider).autoplayNext) {
+        _pageController.nextPage(duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic);
+      } else {
+        setState(() => _userPaused = true);
+      }
+    } else {
+      setState(() {
+        _showEndHint = true;
+        _userPaused = true;
+      });
+    }
+  }
+
+  void _saveProgress({int? episode, bool completed = false}) {
+    final ep = episode ?? _current;
+    final c = _pool[_key(ep)];
+    if (c == null) return;
+    final pos = c.value.position.inSeconds;
+    final total = c.value.duration.inSeconds;
+    if (pos < 3 && !completed) return;
+
+    _repo
+        .saveProgress(
+          seriesId: _seriesId,
+          episodeNum: ep,
+          positionSeconds: completed ? total : pos,
+          totalSeconds: total,
+          completed: completed || (total > 0 && pos >= total - 5),
+        )
+        .catchError((_) {});
+  }
+
+  void _onPageChanged(int index) {
+    final previous = _current;
+    final ep = index + 1;
+    _saveProgress(episode: previous);
+    _pool[_key(previous)]?.pause();
+
+    setState(() {
+      _current = ep;
+      _userPaused = false;
+      _descExpanded = false;
+      _showEndHint = false;
+    });
+    _completed.remove(ep);
+    _pool.retain({_key(ep - 1), _key(ep), _key(ep + 1)});
+    _startEpisode(ep, seekSeconds: _resumePointFor(ep));
+  }
+
+  void _togglePlay() {
+    final c = _currentController;
+    if (c == null) return;
+    if (c.value.isPlaying) {
+      c.pause();
+      setState(() => _userPaused = true);
+    } else {
+      if (c.value.isCompleted) {
+        _completed.remove(_current);
+        c.seekTo(Duration.zero);
+      }
+      c.play();
+      setState(() {
+        _userPaused = false;
+        _showEndHint = false;
+      });
+    }
+  }
+
+  void _setBoost(bool on) {
+    setState(() => _boosted = on);
+    _currentController?.setPlaybackSpeed(on ? 2.0 : _speed);
+    if (on) HapticFeedback.lightImpact();
+  }
+
+  void _goToEpisode(int ep) {
+    if (ep == _current) return;
+    _pageController.jumpToPage(ep - 1);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Actions
+  // ---------------------------------------------------------------------------
+
+  bool get _isFavorite => ref.read(favoritesProvider)[_seriesId] ?? _detail.isFavorite;
+
+  Future<void> _setFavorite(bool value, {bool notify = true}) async {
+    final loc = AppLocale(ref.read(localeProvider));
+    final messenger = ScaffoldMessenger.of(context);
+    final saved = await ref.read(favoritesProvider.notifier).setFavorite(_seriesId, value);
+    if (!notify || saved != value) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(loc.t(value ? 'added_to_list' : 'removed_from_list')),
+        duration: const Duration(milliseconds: 1400),
+      ));
+  }
+
+  void _onDoubleTap() {
+    HapticFeedback.mediumImpact();
+    setState(() => _heartKey++);
+    if (!_isFavorite) _setFavorite(true);
+  }
+
+  void _showEpisodes(AppLocale loc) {
+    final watched = {
+      for (final e in _detail.episodes)
+        if (e.isWatched) e.num,
+      ..._watched,
+    };
+    showEpisodeSheet(
+      context: context,
+      title: '${_detail.title} · ${loc.t('all_episodes')} ($_total)',
+      total: _total,
+      current: _current,
+      watched: watched,
+      onSelect: _goToEpisode,
+    );
+  }
+
+  void _showSpeedMenu(AppLocale loc) {
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(loc.t('speed'), style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 16),
+                Row(
+                  children: [0.75, 1.0, 1.25, 1.5, 2.0].map((speed) {
+                    final selected = speed == _speed;
+                    return Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () {
+                            setState(() => _speed = speed);
+                            _currentController?.setPlaybackSpeed(speed);
+                            Navigator.pop(sheetContext);
+                          },
+                          child: Container(
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              gradient: selected ? AppTheme.primaryGradient : null,
+                              color: selected ? null : AppTheme.surfaceLight,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Text('${speed}x', style: const TextStyle(fontWeight: FontWeight.w800)),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = AppLocale(ref.watch(localeProvider));
+    if (_total == 0) {
+      return _PlayerShell(child: EmptyView(icon: Icons.movie_filter_rounded, message: loc.t('playback_error')));
+    }
+
+    return PageView.builder(
+      controller: _pageController,
+      scrollDirection: Axis.vertical,
+      itemCount: _total,
+      onPageChanged: _onPageChanged,
+      itemBuilder: (context, index) => _buildPage(index + 1, loc),
+    );
+  }
+
+  Widget _buildPage(int ep, AppLocale loc) {
+    final settings = ref.watch(settingsProvider);
+    final isFav = ref.watch(favoritesProvider)[_seriesId] ?? _detail.isFavorite;
+    final controller = _pool[_key(ep)];
+    final isCurrent = ep == _current;
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _togglePlay,
+          onDoubleTapDown: (d) => _heartPos = d.localPosition,
+          onDoubleTap: _onDoubleTap,
+          onLongPressStart: (_) => _setBoost(true),
+          onLongPressEnd: (_) => _setBoost(false),
+          child: VideoSurface(
+            controller: controller,
+            posterUrl: _detail.coverUrl,
+            hasError: _pool.hasError(_key(ep)),
+            showCaptions: settings.subtitles,
+            errorText: loc.t('playback_error'),
+            retryText: loc.t('retry'),
+            captionBottom: 170 + bottomInset,
+            onRetry: () {
+              _pool.reset(_key(ep));
+              setState(() {});
+              _startEpisode(ep);
+            },
+          ),
+        ),
+
+        // Shades for legibility
+        const IgnorePointer(child: _Shades()),
+
+        // Paused indicator
+        if (isCurrent && controller != null)
+          IgnorePointer(
+            child: ValueListenableBuilder<VideoPlayerValue>(
+              valueListenable: controller,
+              builder: (context, value, _) {
+                final show = !value.isPlaying && !value.isBuffering;
+                return AnimatedOpacity(
+                  opacity: show ? 1 : 0,
+                  duration: const Duration(milliseconds: 150),
+                  child: Center(
+                    child: Icon(
+                      value.isCompleted ? Icons.replay_rounded : Icons.play_arrow_rounded,
+                      color: Colors.white.withValues(alpha: 0.85),
+                      size: 76,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+
+        // Top bar
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  Expanded(
+                    child: Text(
+                      "${loc.t('ep')} $ep",
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: loc.t('subtitles'),
+                    icon: Icon(
+                      settings.subtitles ? Icons.closed_caption_rounded : Icons.closed_caption_off_outlined,
+                      color: Colors.white,
+                    ),
+                    onPressed: () => ref.read(settingsProvider.notifier).setSubtitles(!settings.subtitles),
+                  ),
+                  TextButton(
+                    onPressed: () => _showSpeedMenu(loc),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white, minimumSize: const Size(48, 40)),
+                    child: Text(
+                      _speed == 1.0 ? loc.t('speed') : '${_speed}x',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        // 2x badge while long-pressing
+        if (isCurrent && _boosted)
+          Positioned(
+            top: MediaQuery.paddingOf(context).top + 64,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.fast_forward_rounded, color: Colors.white, size: 18),
+                    const SizedBox(width: 6),
+                    Text(loc.t('speed_2x'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        // Right action rail
+        PositionedDirectional(
+          end: 8,
+          bottom: 130 + bottomInset,
+          child: Column(
+            children: [
+              _RailButton(
+                icon: isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                color: isFav ? AppTheme.primary : Colors.white,
+                label: loc.t(isFav ? 'in_my_list' : 'add_my_list'),
+                onTap: () => _setFavorite(!isFav),
+              ),
+              _RailButton(
+                icon: Icons.video_library_rounded,
+                label: '$_current/$_total',
+                onTap: () => _showEpisodes(loc),
+              ),
+            ],
+          ),
+        ),
+
+        // Title, episode & synopsis
+        PositionedDirectional(
+          start: 14,
+          end: 84,
+          bottom: 84 + bottomInset,
+          child: GestureDetector(
+            onTap: () => setState(() => _descExpanded = !_descExpanded),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _detail.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+                if (_detail.description.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    alignment: Alignment.topCenter,
+                    child: Text(
+                      _detail.description,
+                      maxLines: _descExpanded ? 8 : 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.35),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+
+        // End-of-series hint
+        if (isCurrent && _showEndHint)
+          Positioned(
+            left: 32,
+            right: 32,
+            bottom: 200 + bottomInset,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+              child: Text(
+                loc.t('last_episode'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+
+        // Progress bar + episodes bar
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (controller != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: VideoProgressBar(controller: controller),
+                )
+              else
+                const SizedBox(height: 20),
+              InkWell(
+                onTap: () => _showEpisodes(loc),
+                child: Container(
+                  height: 48,
+                  margin: EdgeInsets.only(bottom: bottomInset),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  color: Colors.white.withValues(alpha: 0.08),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.layers_rounded, color: Colors.white, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          "${loc.t('all_episodes')} · ${loc.t('ep')} $ep / $_total",
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                      ),
+                      const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white70),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        if (isCurrent && _heartPos != null && _heartKey > 0)
+          HeartBurst(key: ValueKey(_heartKey), position: _heartPos!),
+      ],
+    );
+  }
+}
+
+class _Shades extends StatelessWidget {
+  const _Shades();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          height: 140,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.black.withValues(alpha: 0.6), Colors.transparent],
+            ),
+          ),
+        ),
+        const Spacer(),
+        Container(
+          height: 300,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+              colors: [Colors.black.withValues(alpha: 0.85), Colors.transparent],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RailButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color color;
+
+  const _RailButton({required this.icon, required this.label, required this.onTap, this.color = Colors.white});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: 64,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 34, shadows: const [Shadow(color: Colors.black54, blurRadius: 8)]),
+              const SizedBox(height: 3),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  shadows: [Shadow(color: Colors.black54, blurRadius: 6)],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

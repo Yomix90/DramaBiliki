@@ -1,4 +1,4 @@
-# Python
+# Python (root-anchored lib dirs so mobile/lib stays tracked)
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,8 +13,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -59,3 +59,4 @@ mobile/macos/Flutter/ephemeral/
 *.swo
 .DS_Store
 Thumbs.db
+.claude/launch.json

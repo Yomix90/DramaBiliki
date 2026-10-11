@@ -1,5 +1,5 @@
-from typing import Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from typing import Dict, Any, List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 
 from bridge.database import get_db
@@ -119,12 +119,13 @@ async def update_progress(
 @router.get("/me/library")
 async def get_my_library(
     request: Request,
+    lang: Optional[str] = Query(None, description="Language code; defaults to the user's preferred language"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Returns user's favorites and viewing history."""
     base_url = str(request.base_url).rstrip("/")
-    lang = current_user.preferred_language or "en"
+    lang = lang or current_user.preferred_language or "en"
 
     # Favorites
     favorites = []
