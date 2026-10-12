@@ -415,10 +415,82 @@ async def users_delete(user_id: int, db: Session = Depends(get_db), admin: str =
 
 @router.get("/app", response_class=HTMLResponse)
 async def app_page(request: Request, admin: str = Depends(require_admin)):
-    apk = None
-    if LATEST_APK.is_file():
-        apk = {"size_mb": round(LATEST_APK.stat().st_size / 1024 ** 2, 1)}
-    return _page(request, "app_settings.html", admin=admin, cfg=app_settings.get_all(), apk=apk)
+    return _page(request, "app_settings.html", admin=admin, cfg=app_settings.get_all(), apk=_published_apk())
+
+
+def _published_apk() -> Optional[dict]:
+    """Size, date and fingerprint of the APK currently served to the apps."""
+    import datetime
+    import hashlib
+    if not LATEST_APK.is_file():
+        return None
+    stat = LATEST_APK.stat()
+    digest = hashlib.sha256()
+    with open(LATEST_APK, "rb") as fh:
+        for block in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(block)
+    return {
+        "size_mb": round(stat.st_size / 1024 ** 2, 1),
+        "uploaded_at": datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%d/%m/%Y %H:%M"),
+        "sha": digest.hexdigest()[:12],
+    }
+
+
+# Chunked APK upload: a single 60 MB request exceeds the reverse proxy timeout
+# (Traefik cuts requests after 60 s -> "Bad Gateway").
+_apk_uploads: dict = {}
+
+
+@router.post("/app/apk/init")
+async def apk_upload_init(request: Request, admin: str = Depends(require_admin)):
+    payload = await request.json()
+    size = int(payload.get("size") or 0)
+    if size < 1024 or size > 500 * 1024 * 1024:
+        return JSONResponse({"error": "Taille d'APK invalide"}, status_code=400)
+    APK_DIR.mkdir(parents=True, exist_ok=True)
+    upload_id = uuid.uuid4().hex
+    part = APK_DIR / f"upload-{upload_id}.part"
+    part.touch()
+    _apk_uploads[upload_id] = {"size": size, "chunks": {}, "path": part}
+    return JSONResponse({"id": upload_id})
+
+
+@router.put("/app/apk/{upload_id}")
+async def apk_upload_chunk(upload_id: str, request: Request, offset: int = 0, admin: str = Depends(require_admin)):
+    import asyncio
+    up = _apk_uploads.get(upload_id)
+    if up is None:
+        return JSONResponse({"error": "Envoi inconnu"}, status_code=404)
+    data = await request.body()
+    if offset < 0 or offset + len(data) > up["size"]:
+        return JSONResponse({"error": "Morceau hors limites"}, status_code=400)
+
+    def _write():
+        with open(up["path"], "r+b") as fh:
+            fh.seek(offset)
+            fh.write(data)
+
+    await asyncio.to_thread(_write)
+    up["chunks"][offset] = len(data)
+    return JSONResponse({"received": sum(up["chunks"].values())})
+
+
+@router.post("/app/apk/{upload_id}/complete")
+async def apk_upload_complete(upload_id: str, admin: str = Depends(require_admin)):
+    up = _apk_uploads.pop(upload_id, None)
+    if up is None:
+        return JSONResponse({"error": "Envoi inconnu"}, status_code=404)
+    path = up["path"]
+    if sum(up["chunks"].values()) < up["size"]:
+        path.unlink(missing_ok=True)
+        return JSONResponse({"error": "Fichier incomplet, recommencez"}, status_code=400)
+    with open(path, "rb") as fh:
+        is_apk = fh.read(2) == b"PK"
+    if not is_apk:
+        path.unlink(missing_ok=True)
+        return JSONResponse({"error": "Ce fichier n'est pas un APK valide"}, status_code=400)
+    path.replace(LATEST_APK)
+    return JSONResponse({"ok": True, "apk": _published_apk()})
 
 
 @router.post("/app/update")

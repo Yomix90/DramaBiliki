@@ -6,7 +6,7 @@
 {% block content %}
 <div class="row g-3">
     <div class="col-lg-6">
-        <form class="card p-3 h-100" method="post" action="/admin/app/update" enctype="multipart/form-data">
+        <form class="card p-3 h-100" method="post" action="/admin/app/update" id="updateForm">
             <h6 class="fw-bold mb-1"><i class="bi bi-arrow-up-circle text-info"></i> Mise à jour de l'application</h6>
             <p class="small text-secondary">Au lancement, l'application compare sa version à celle-ci et propose (ou impose) le téléchargement du nouvel APK.</p>
             <div class="row g-2 mb-2">
@@ -20,8 +20,18 @@
                 </div>
             </div>
             <div class="mb-2">
-                <label class="form-label small text-secondary">Fichier APK {% if apk %}<span class="text-success">(actuel : {{ apk.size_mb }} Mo — <a href="/download/app.apk">télécharger</a>)</span>{% endif %}</label>
-                <input type="file" name="apk" accept=".apk" class="form-control form-control-sm">
+                <label class="form-label small text-secondary">Nouveau fichier APK</label>
+                <input type="file" id="apkFile" accept=".apk" class="form-control form-control-sm">
+                <div class="progress mt-2 d-none" id="apkProgressWrap" style="height:6px;background:var(--surface2)"><div class="progress-bar" id="apkProgress" style="width:0%;background:var(--brand)"></div></div>
+                <div class="small mt-1" id="apkStatus"></div>
+                <div class="small mt-2 p-2 rounded" style="background:var(--surface2)">
+                    {% if apk %}
+                    <i class="bi bi-box-seam"></i> APK actuellement publié : <strong>{{ apk.size_mb }} Mo</strong>, envoyé le {{ apk.uploaded_at }},
+                    empreinte <code>{{ apk.sha }}</code> — <a href="/download/app.apk">télécharger</a>
+                    {% else %}
+                    <i class="bi bi-exclamation-circle"></i> Aucun APK publié pour le moment.
+                    {% endif %}
+                </div>
             </div>
             <div class="mb-2">
                 <label class="form-label small text-secondary">… ou lien de téléchargement externe (facultatif)</label>
@@ -60,4 +70,47 @@
         </form>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// The APK is sent in 8 MB chunks (a single big request is cut by the proxy after 60 s),
+// then the version settings are saved.
+document.getElementById('updateForm').addEventListener('submit', async (ev) => {
+    const file = document.getElementById('apkFile').files[0];
+    if (!file) return;  // settings only
+    ev.preventDefault();
+    const form = ev.target, btn = form.querySelector('button[type=submit], button:not([type])');
+    const bar = document.getElementById('apkProgress'), status = document.getElementById('apkStatus');
+    document.getElementById('apkProgressWrap').classList.remove('d-none');
+    btn.disabled = true;
+    const fail = (msg) => { status.innerHTML = `<span class="text-danger">${msg}</span>`; btn.disabled = false; };
+    try {
+        const init = await fetch('/admin/app/apk/init', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({size: file.size})});
+        const job = await init.json();
+        if (!init.ok) return fail(job.error || 'Envoi refusé');
+        const CHUNK = 8 * 1024 * 1024;
+        let sent = 0;
+        for (let offset = 0; offset < file.size; offset += CHUNK) {
+            const blob = file.slice(offset, offset + CHUNK);
+            let ok = false;
+            for (let attempt = 0; attempt < 5 && !ok; attempt++) {
+                try { ok = (await fetch(`/admin/app/apk/${job.id}?offset=${offset}`, {method: 'PUT', body: blob})).ok; } catch (e) {}
+                if (!ok) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+            }
+            if (!ok) return fail('Échec réseau pendant l’envoi, réessayez.');
+            sent += blob.size;
+            bar.style.width = (100 * sent / file.size).toFixed(0) + '%';
+            status.textContent = `Envoi de l’APK… ${(100 * sent / file.size).toFixed(0)} % (${(sent / 1048576).toFixed(1)} / ${(file.size / 1048576).toFixed(1)} Mo)`;
+        }
+        const done = await fetch(`/admin/app/apk/${job.id}/complete`, {method: 'POST'});
+        const res = await done.json();
+        if (!done.ok) return fail(res.error || 'Finalisation refusée');
+        status.innerHTML = '<span class="text-success">APK envoyé, enregistrement des réglages…</span>';
+        form.submit();  // saves version, notes and forced-update flag
+    } catch (e) {
+        fail('Erreur : ' + e.message);
+    }
+});
+</script>
 {% endblock %}

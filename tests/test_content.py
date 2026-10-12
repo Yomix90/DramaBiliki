@@ -299,3 +299,28 @@ def test_backup_export_and_restore_roundtrip(client, tmp_path):
         db.close()
     assert any((settings.DATA_DIR / "backups").glob("before-restore-*.db"))
     assert backup.sqlite_path() is not None
+
+
+def test_chunked_apk_upload_then_settings(client):
+    from bridge.api.v1.routes_app import LATEST_APK
+    admin_login(client)
+    apk = b"PK" + bytes(range(256)) * 400  # ~100 KB fake APK
+    job = client.post("/admin/app/apk/init", json={"size": len(apk)}).json()
+    chunk = 30000
+    for offset in range(0, len(apk), chunk):
+        assert client.put(f"/admin/app/apk/{job['id']}?offset={offset}", content=apk[offset:offset + chunk]).status_code == 200
+    done = client.post(f"/admin/app/apk/{job['id']}/complete")
+    assert done.status_code == 200 and done.json()["apk"]["sha"]
+    assert LATEST_APK.read_bytes() == apk
+
+    # Version settings are saved by a plain form post (no file)
+    r = client.post("/admin/app/update", data={"latest_version": "2.0.0", "min_version": "1.0.0", "notes": "n"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert client.get("/api/v1/app/version?current=1.9.0").json()["latest_version"] == "2.0.0"
+    page = client.get("/admin/app").text
+    assert "APK actuellement publié" in page and done.json()["apk"]["sha"] in page
+
+    # A non-APK file is rejected
+    job = client.post("/admin/app/apk/init", json={"size": 2048}).json()
+    client.put(f"/admin/app/apk/{job['id']}?offset=0", content=b"x" * 2048)
+    assert client.post(f"/admin/app/apk/{job['id']}/complete").status_code == 400
