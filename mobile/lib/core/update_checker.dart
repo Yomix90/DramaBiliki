@@ -8,6 +8,7 @@ import '../providers/app_providers.dart';
 import 'app_theme.dart';
 import 'constants.dart';
 import 'localization.dart';
+import 'server_url.dart';
 
 /// Asks the bridge whether a newer APK is published, then downloads it inside the
 /// app and opens the Android installer (the user only confirms "Install").
@@ -61,7 +62,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
     });
     try {
       _sub = OtaUpdate()
-          .execute(widget.info.downloadUrl, destinationFilename: 'dramabiliki-update.apk')
+          .execute(resolveServerUrl(widget.info.downloadUrl), destinationFilename: 'dramabiliki-update.apk')
           .listen(_onEvent, onError: (Object e) => _fail(e.toString()));
     } catch (e) {
       _fail(e.toString());
@@ -94,7 +95,7 @@ class _UpdateDialogState extends State<_UpdateDialog> {
   }
 
   Future<void> _openInBrowser() async {
-    await launchUrl(Uri.parse(widget.info.downloadUrl), mode: LaunchMode.externalApplication);
+    await launchUrl(Uri.parse(resolveServerUrl(widget.info.downloadUrl)), mode: LaunchMode.externalApplication);
   }
 
   @override

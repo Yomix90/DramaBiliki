@@ -3,11 +3,11 @@ class AppConstants {
   // Override at build time: flutter build apk --dart-define=API_BASE_URL=https://api.example.com
   static const String defaultBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://2.29.96.137:8090',
+    defaultValue: 'https://dramabiliki.digitlab.dev',
   );
 
   static const String appName = "DramaBiliki";
-  static const String appVersion = "1.4.0";
+  static const String appVersion = "1.5.0";
 
   // Paging
   static const int pageSize = 18;

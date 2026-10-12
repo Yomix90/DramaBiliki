@@ -248,3 +248,54 @@ def test_apk_download_keeps_content_length(client, tmp_path):
     assert r.headers.get("content-length") == "5002" and "content-encoding" not in r.headers
     # JSON is still compressed
     assert client.get("/api/v1/genres", headers={"Accept-Encoding": "gzip"}).status_code == 200
+
+
+def test_backup_export_and_restore_roundtrip(client, tmp_path):
+    import zipfile
+    from bridge import backup
+    from bridge.config import settings
+    admin_login(client)
+    title = f"Backup Drama {uuid.uuid4().hex[:5]}"
+    db = SessionLocal()
+    try:
+        from bridge import uploads
+        series = uploads.create_series(db, title)
+        series.local_cover = f"{series.source_id}.webp"
+        db.commit()
+        (settings.COVERS_DIR / series.local_cover).write_bytes(b"RIFF....WEBPVP8 ")
+    finally:
+        db.close()
+
+    r = client.get("/admin/backup/download?covers=1")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    archive = tmp_path / "backup.zip"
+    archive.write_bytes(r.content)
+    with zipfile.ZipFile(archive) as zf:
+        names = zf.namelist()
+    assert "dramabiliki.db" in names and "manifest.json" in names and any(n.startswith("covers/") for n in names)
+
+    # Simulate a fresh server: the series and its cover disappear
+    db = SessionLocal()
+    try:
+        db.delete(db.query(Series).filter(Series.title == title).one())
+        db.commit()
+    finally:
+        db.close()
+    for f in settings.COVERS_DIR.glob("up-*.webp"):
+        f.unlink()
+
+    # Refused without confirmation, refused for a non-database file
+    assert "confirmation" in client.post("/admin/backup/restore", files={"file": ("b.zip", archive.read_bytes())}).text
+    bad = client.post("/admin/backup/restore", data={"confirm": "yes"}, files={"file": ("x.db", b"not a database")})
+    assert "refusée" in bad.text
+
+    ok = client.post("/admin/backup/restore", data={"confirm": "yes"}, files={"file": ("b.zip", archive.read_bytes())})
+    assert ok.status_code == 200 and "Restauration terminée" in ok.text
+    db = SessionLocal()
+    try:
+        restored = db.query(Series).filter(Series.title == title).one()
+        assert (settings.COVERS_DIR / restored.local_cover).exists()
+    finally:
+        db.close()
+    assert any((settings.DATA_DIR / "backups").glob("before-restore-*.db"))
+    assert backup.sqlite_path() is not None

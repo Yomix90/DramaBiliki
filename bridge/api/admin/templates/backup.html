@@ -1,0 +1,66 @@
+{% extends "_base.html" %}
+{% set active = 'backup' %}
+{% block title %}Sauvegarde — DramaBiliki Admin{% endblock %}
+{% block page_title %}Sauvegarde &amp; migration{% endblock %}
+{% block page_sub %}Exportez toutes les données, puis importez-les sur un nouveau VPS{% endblock %}
+{% block content %}
+{% if not stats.sqlite %}
+<div class="alert alert-warning small">La sauvegarde intégrée ne prend en charge que SQLite (configuration actuelle différente).</div>
+{% endif %}
+
+<div class="row g-3">
+    <div class="col-lg-6">
+        <form class="card p-3 h-100" method="get" action="/admin/backup/download">
+            <h2 class="card-title-sm mb-1"><i class="bi bi-cloud-download text-info"></i> Exporter</h2>
+            <p class="small text-secondary">Télécharge une archive <code>.zip</code> contenant toute la plateforme.</p>
+            <ul class="small mb-3">
+                <li><strong>Base de données</strong> ({{ stats.db_mb if stats.db_mb is not none else '—' }} Mo) : {{ stats.series }} séries, épisodes, {{ stats.users }} utilisateurs, favoris, historique, réglages, compte et chaînes Telegram</li>
+                <li><strong>Clé secrète</strong> : les utilisateurs restent connectés après le changement de serveur</li>
+            </ul>
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" name="covers" value="1" id="bCovers" checked>
+                <label class="form-check-label" for="bCovers">Inclure les affiches <span class="text-secondary small">({{ stats.covers }} fichiers, {{ stats.covers_mb }} Mo)</span></label>
+            </div>
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" name="videos" value="1" id="bVideos">
+                <label class="form-check-label" for="bVideos">Inclure les vidéos stockées sur le serveur <span class="text-secondary small">({{ stats.videos }} fichiers, {{ stats.videos_mb }} Mo)</span></label>
+                <div class="small text-secondary">Les vidéos de vos chaînes Telegram restent sur Telegram : inutile de les exporter.</div>
+            </div>
+            <div class="alert alert-warning small py-2 mb-3">
+                <i class="bi bi-shield-lock"></i> L'archive contient la session de votre compte Telegram et les comptes utilisateurs : conservez-la en lieu sûr.
+            </div>
+            <button class="btn btn-brand mt-auto" {{ 'disabled' if not stats.sqlite }}><i class="bi bi-download"></i> Télécharger la sauvegarde</button>
+        </form>
+    </div>
+
+    <div class="col-lg-6">
+        <form class="card p-3 h-100" method="post" action="/admin/backup/restore" enctype="multipart/form-data"
+              onsubmit="return confirm('Remplacer TOUTES les données de ce serveur par cette sauvegarde ?')">
+            <h2 class="card-title-sm mb-1"><i class="bi bi-cloud-upload text-warning"></i> Importer</h2>
+            <p class="small text-secondary">Sur le nouveau VPS : déployez l'application, connectez-vous, puis importez l'archive. Tout redevient fonctionnel : séries, utilisateurs, Telegram, réglages.</p>
+            <input type="file" name="file" accept=".zip,.db,.sqlite,.sqlite3" class="form-control mb-3" required>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" name="confirm" value="yes" id="bConfirm" required>
+                <label class="form-check-label small" for="bConfirm">Je comprends que les données actuelles de ce serveur seront remplacées (une copie de sécurité est conservée automatiquement).</label>
+            </div>
+            <button class="btn btn-outline-light mt-auto" {{ 'disabled' if not stats.sqlite }}><i class="bi bi-upload"></i> Importer et remplacer</button>
+            {% if previous %}
+            <div class="small text-secondary mt-3">Copies de sécurité automatiques (dossier <code>data/backups</code>) :
+                {% for p in previous %}<code class="d-block">{{ p }}</code>{% endfor %}</div>
+            {% endif %}
+        </form>
+    </div>
+
+    <div class="col-12">
+        <div class="card p-3">
+            <h2 class="card-title-sm mb-2"><i class="bi bi-signpost-split"></i> Changer de VPS en 4 étapes</h2>
+            <ol class="small mb-0">
+                <li>Ici, cliquez <strong>Télécharger la sauvegarde</strong>.</li>
+                <li>Sur le nouveau VPS, déployez le dépôt GitHub avec Dokploy (mêmes variables : <code>ADMIN_PASSWORD</code>…).</li>
+                <li>Faites pointer le domaine <code>dramabiliki.digitlab.dev</code> vers l'IP du nouveau VPS (DNS) et ajoutez-le dans Dokploy → Domains (port 8090).</li>
+                <li>Ouvrez l'admin du nouveau serveur → <strong>Sauvegarde</strong> → <strong>Importer</strong>. L'application mobile continue de fonctionner sans mise à jour, car elle utilise le domaine.</li>
+            </ol>
+        </div>
+    </div>
+</div>
+{% endblock %}

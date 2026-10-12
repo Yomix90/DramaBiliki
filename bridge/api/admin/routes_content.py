@@ -520,3 +520,91 @@ async def genre_delete(genre_id: int, db: Session = Depends(get_db), admin: str 
         db.delete(genre)
         db.commit()
     return _back("/admin/genres", "Genre supprimé (les séries sont conservées)")
+
+
+# ---------------------------------------------------------------------------
+# Backup / restore (moving to another VPS)
+# ---------------------------------------------------------------------------
+
+@router.get("/backup", response_class=HTMLResponse)
+async def backup_page(request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    from bridge import backup
+    db_file = backup.sqlite_path()
+    videos_dir = settings.MEDIA_DIR / "videos" / "local"
+    stats = {
+        "db_mb": round(db_file.stat().st_size / 1024 ** 2, 1) if db_file and db_file.exists() else None,
+        "covers": len(list(settings.COVERS_DIR.glob("*.webp"))) if settings.COVERS_DIR.is_dir() else 0,
+        "covers_mb": round(sum(f.stat().st_size for f in settings.COVERS_DIR.glob("*.webp")) / 1024 ** 2, 1) if settings.COVERS_DIR.is_dir() else 0,
+        "videos": len([f for f in videos_dir.iterdir() if f.is_file()]) if videos_dir.is_dir() else 0,
+        "videos_mb": round(sum(f.stat().st_size for f in videos_dir.iterdir() if f.is_file()) / 1024 ** 2, 1) if videos_dir.is_dir() else 0,
+        "series": db.query(Series).count(),
+        "users": db.query(User).count(),
+        "sqlite": db_file is not None,
+    }
+    previous = sorted((settings.DATA_DIR / "backups").glob("before-restore-*.db"), reverse=True)[:5] if (settings.DATA_DIR / "backups").is_dir() else []
+    return _page(request, "backup.html", admin=admin, stats=stats, previous=[p.name for p in previous])
+
+
+@router.get("/backup/download")
+async def backup_download(covers: int = 0, videos: int = 0, admin: str = Depends(require_admin)):
+    import asyncio
+    from fastapi.responses import FileResponse
+    from starlette.background import BackgroundTask
+    from bridge import backup
+    try:
+        archive = await asyncio.to_thread(backup.create_backup, bool(covers), bool(videos))
+    except backup.BackupError as e:
+        return _back("/admin/backup", str(e), "danger")
+    return FileResponse(
+        archive,
+        media_type="application/zip",
+        filename=archive.name,
+        background=BackgroundTask(lambda: shutil.rmtree(archive.parent, ignore_errors=True)),
+    )
+
+
+@router.post("/backup/restore")
+async def backup_restore(
+    file: UploadFile = File(...),
+    confirm: Optional[str] = Form(None),
+    admin: str = Depends(require_admin),
+):
+    import asyncio
+    import tempfile
+    from bridge import backup
+    from bridge.database import SessionLocal
+    from bridge.sync import is_sync_running, mark_interrupted_runs
+
+    if confirm != "yes":
+        return _back("/admin/backup", "Cochez la case de confirmation pour remplacer les données.", "warning")
+    if is_sync_running():
+        return _back("/admin/backup", "Une synchronisation est en cours : réessayez dans un instant.", "warning")
+    if not file.filename:
+        return _back("/admin/backup", "Choisissez un fichier de sauvegarde (.zip ou .db).", "danger")
+
+    tmp = Path(tempfile.mkdtemp(prefix="dramabiliki-upload-")) / "upload.bin"
+    try:
+        with open(tmp, "wb") as fh:
+            while chunk := await file.read(8 * 1024 * 1024):
+                fh.write(chunk)
+        await telegram_service.close()
+        summary = await asyncio.to_thread(backup.restore_backup, tmp)
+    except backup.BackupError as e:
+        return _back("/admin/backup", f"Restauration refusée : {e}", "danger")
+    finally:
+        shutil.rmtree(tmp.parent, ignore_errors=True)
+
+    db = SessionLocal()
+    try:
+        mark_interrupted_runs(db)
+    finally:
+        db.close()
+    app_settings.set_many({})  # drop cached settings
+    c = summary["counts"]
+    response = _back(
+        "/admin/backup",
+        f"Restauration terminée : {c.get('series', 0)} séries, {c.get('episodes', 0)} épisodes, "
+        f"{c.get('users', 0)} utilisateurs, {summary['covers']} affiches, {summary['videos']} vidéos."
+        + (" Reconnectez-vous à l'admin." if summary["secret_restored"] else ""),
+    )
+    return response

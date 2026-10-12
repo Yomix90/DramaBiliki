@@ -151,6 +151,9 @@ async def admin_dashboard(
             tg_status["error"] = str(e)
 
     warnings = []
+    from bridge.urls import public_base_url_problem
+    if public_base_url_problem():
+        warnings.append(public_base_url_problem())
     if settings.admin_password_is_default:
         warnings.append("Le mot de passe admin par défaut est utilisé : définissez ADMIN_PASSWORD dans les variables d'environnement.")
 

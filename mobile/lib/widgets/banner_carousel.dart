@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/banner.dart';
 import '../core/app_theme.dart';
+import '../core/server_url.dart';
 
 class BannerCarousel extends StatefulWidget {
   final List<BannerModel> banners;
@@ -112,7 +113,7 @@ class _BannerCarouselState extends State<BannerCarousel> {
             fit: StackFit.expand,
             children: [
               CachedNetworkImage(
-                imageUrl: banner.imageUrl,
+                imageUrl: resolveServerUrl(banner.imageUrl),
                 fit: BoxFit.cover,
                 alignment: const Alignment(0, -0.4),
                 placeholder: (context, url) => Container(color: AppTheme.surfaceLight),

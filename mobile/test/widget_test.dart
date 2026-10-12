@@ -5,6 +5,7 @@ import 'package:mobile/models/series.dart';
 import 'package:mobile/models/episode.dart';
 import 'package:mobile/models/library.dart';
 import 'package:mobile/widgets/network_cover.dart';
+import 'package:mobile/core/server_url.dart';
 import 'package:mobile/widgets/series_card.dart';
 
 void main() {
@@ -63,10 +64,20 @@ void main() {
     });
   });
 
+  group('Server URLs', () {
+    test('bridge links use the built-in server, external links are untouched', () {
+      expect(resolveServerUrl('https://votre-domainedge_media:/app/media/download/app.apk?v=1.4.1'),
+          'https://dramabiliki.digitlab.dev/download/app.apk?v=1.4.1');
+      expect(resolveServerUrl('/download/app.apk?v=2'), 'https://dramabiliki.digitlab.dev/download/app.apk?v=2');
+      expect(resolveServerUrl('http://2.29.96.137:8090/media/covers/a.webp'), 'https://dramabiliki.digitlab.dev/media/covers/a.webp');
+      expect(resolveServerUrl('https://dramaflix.net/dfl-media/img/covers/x/240.webp'), 'https://dramaflix.net/dfl-media/img/covers/x/240.webp');
+    });
+  });
+
   group('Cover URLs', () {
     test('requests resized variants only for local bridge covers', () {
-      expect(sizedCoverUrl('http://h/media/covers/1.webp', width: 200), 'http://h/media/covers/1.webp?w=300');
-      expect(sizedCoverUrl('http://h/media/covers/1.webp', width: 500), 'http://h/media/covers/1.webp?w=600');
+      expect(sizedCoverUrl('http://h/media/covers/1.webp', width: 200), 'https://dramabiliki.digitlab.dev/media/covers/1.webp?w=300');
+      expect(sizedCoverUrl('http://h/media/covers/1.webp', width: 500), 'https://dramabiliki.digitlab.dev/media/covers/1.webp?w=600');
       expect(sizedCoverUrl('https://cdn.example.com/x.jpg', width: 300), 'https://cdn.example.com/x.jpg');
       expect(sizedCoverUrl('', width: 300), '');
     });

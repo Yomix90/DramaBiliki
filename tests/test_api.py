@@ -56,10 +56,15 @@ def test_urls_follow_forwarded_proto(client):
     assert "http://api.example.com/media/covers/test-1.webp" in covers
 
 
-def test_public_base_url_overrides_request(client, monkeypatch):
+def test_links_use_the_address_the_app_called(client, monkeypatch):
     from bridge.config import settings
+    # A broken PUBLIC_BASE_URL (as once set in Dokploy) must never leak into links
+    monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://votre-domainedge_media:/app/media")
+    covers = [s["cover_url"] for s in client.get("/api/v1/series?limit=5", headers={"host": "dramabiliki.example.com"}).json()]
+    assert "http://dramabiliki.example.com/media/covers/test-1.webp" in covers
+    # A valid one is only a fallback for internal host names
     monkeypatch.setattr(settings, "PUBLIC_BASE_URL", "https://api.dramabiliki.com")
-    covers = [s["cover_url"] for s in client.get("/api/v1/series?limit=5").json()]
+    covers = [s["cover_url"] for s in client.get("/api/v1/series?limit=5", headers={"host": "localhost"}).json()]
     assert "https://api.dramabiliki.com/media/covers/test-1.webp" in covers
 
 

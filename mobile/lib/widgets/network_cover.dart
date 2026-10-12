@@ -1,10 +1,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../core/app_theme.dart';
+import '../core/server_url.dart';
 
 /// Asks the bridge for a resized WebP variant when the cover is served locally
 /// (`/media/covers/...` supports `?w=300|600`). Remote URLs are left untouched.
 String sizedCoverUrl(String url, {int? width}) {
+  url = resolveServerUrl(url);
   if (width == null || url.isEmpty || !url.contains('/media/covers/') || url.contains('?')) return url;
   return '$url?w=${width <= 300 ? 300 : 600}';
 }
