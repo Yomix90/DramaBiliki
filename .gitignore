@@ -67,3 +67,8 @@ Thumbs.db
 # Local reference project (contains secrets & a Telegram session) — never commit
 exemple/
 *.session
+
+# Runtime media (APKs, uploaded videos, temp uploads) — never commit
+media/apk/
+media/videos/
+media/uploads_tmp/
