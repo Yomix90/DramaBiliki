@@ -76,20 +76,7 @@ def _unique_slug(db: Session, base: str) -> str:
     return slug
 
 
-def _channel_genre(db: Session, channel: TelegramChannel) -> Genre:
-    slug = f"tg-{abs(channel.peer_id)}"
-    genre = db.query(Genre).filter_by(slug=slug).first()
-    if not genre:
-        genre = Genre(slug=slug, name=channel.title or "Telegram", names_json={"en": channel.title or "Telegram"})
-        db.add(genre)
-        db.flush()
-    elif channel.title and genre.name != channel.title:
-        genre.name = channel.title
-        genre.names_json = {"en": channel.title}
-    return genre
-
-
-def _get_or_create_series(db: Session, channel: TelegramChannel, title: str, genre: Genre) -> Series:
+def _get_or_create_series(db: Session, channel: TelegramChannel, title: str) -> Series:
     key = title.casefold() if channel.mode == "caption" else "__channel__"
     source_id = _series_source_id(channel, key)
     series = db.query(Series).filter(Series.source_id == source_id).first()
@@ -112,7 +99,6 @@ def _get_or_create_series(db: Session, channel: TelegramChannel, title: str, gen
     )
     db.add(series)
     db.flush()
-    series.genres.append(genre)
     return series
 
 
@@ -168,7 +154,6 @@ async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False
         raise RuntimeError("Compte Telegram non connecté.")
 
     peer = telegram_service.input_peer(channel.peer_id, channel.access_hash)
-    genre = _channel_genre(db, channel)
     min_id = 0 if full else (channel.last_message_id or 0)
     added = 0
     last_id = channel.last_message_id or 0
@@ -193,7 +178,7 @@ async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False
         title, ep_num = detect_series_and_episode(message.message or "", getattr(message.file, "name", None) or "")
         if channel.mode == "single" or not title:
             title = channel.title or "Telegram"
-        series = _get_or_create_series(db, channel, title, genre)
+        series = _get_or_create_series(db, channel, title)
 
         used = {num for (num,) in db.query(Episode.num).filter(Episode.series_id == series.id)}
         if ep_num is None or ep_num in used:

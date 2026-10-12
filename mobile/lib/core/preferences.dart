@@ -41,13 +41,9 @@ class PreferencesService {
     await _prefs.setString(AppConstants.keyLanguage, code);
   }
 
-  String getBaseUrl() {
-    return _prefs.getString(AppConstants.keyBaseUrl) ?? AppConstants.defaultBaseUrl;
-  }
-
-  Future<void> setBaseUrl(String url) async {
-    await _prefs.setString(AppConstants.keyBaseUrl, url);
-  }
+  /// The server address is built into the app (an old value saved by previous
+  /// versions is ignored).
+  String getBaseUrl() => AppConstants.defaultBaseUrl;
 
   bool getDataSaver() {
     return _prefs.getBool(AppConstants.keyDataSaver) ?? false;

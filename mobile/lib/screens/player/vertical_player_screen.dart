@@ -1,9 +1,11 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+
 import '../../core/app_theme.dart';
 import '../../core/localization.dart';
 import '../../core/repository.dart';
@@ -110,6 +112,11 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
   int _heartKey = 0;
   Timer? _syncTimer;
 
+  /// Title, buttons and episode bar fade out after a few seconds of playback.
+  bool _chromeVisible = true;
+  Timer? _hideTimer;
+  static const _chromeTimeout = Duration(seconds: 3);
+
   /// Episodes whose end was already handled (avoids re-triggering autoplay).
   final Set<int> _completed = {};
 
@@ -134,9 +141,11 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable();
     _repo = ref.read(repositoryProvider);
-    _pool = VideoPool(onChanged: () {
-      if (mounted) setState(() {});
-    });
+    _pool = VideoPool(
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+    );
 
     ref.read(adsConfigProvider); // start fetching the ad policy
     _current = widget.initialEpisode.clamp(1, _total > 0 ? _total : 1);
@@ -150,6 +159,7 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
   void dispose() {
     _saveProgress();
     _syncTimer?.cancel();
+    _hideTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     WakelockPlus.disable();
     _pageController.dispose();
@@ -181,11 +191,7 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
   }
 
   Future<VideoPlayerController?> _ensure(int ep) {
-    return _pool.ensure(
-      _key(ep),
-      _repo.streamUri(_seriesId, ep),
-      captions: () => _repo.subtitles(_seriesId, ep),
-    );
+    return _pool.ensure(_key(ep), _repo.streamUri(_seriesId, ep), captions: () => _repo.subtitles(_seriesId, ep));
   }
 
   Future<void> _startEpisode(int ep, {int? seekSeconds}) async {
@@ -204,7 +210,10 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
     await c.setPlaybackSpeed(_boosted ? 2.0 : _speed);
     c.removeListener(_onTick);
     c.addListener(_onTick);
-    if (_passAdGate(ep) && !_userPaused && _inForeground) await c.play();
+    if (_passAdGate(ep) && !_userPaused && _inForeground) {
+      await c.play();
+      _scheduleHide();
+    }
 
     _preload(ep + 1);
   }
@@ -252,8 +261,14 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
 
   void _onTick() {
     final c = _currentController;
-    if (c == null || _completed.contains(_current)) return;
+    if (c == null) return;
     final v = c.value;
+    // Re-arm the end-of-episode detection only once playback has really moved away
+    // from the end (right after a replay, the player still reports "completed").
+    if (v.duration > Duration.zero && v.position < v.duration - const Duration(seconds: 2)) {
+      _completed.remove(_current);
+    }
+    if (_completed.contains(_current)) return;
     final nearEnd = v.duration > Duration.zero && v.position >= v.duration - const Duration(milliseconds: 300);
     if (v.isCompleted || (nearEnd && !v.isPlaying)) {
       _completed.add(_current);
@@ -268,12 +283,16 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
       if (ref.read(settingsProvider).autoplayNext) {
         _pageController.nextPage(duration: const Duration(milliseconds: 450), curve: Curves.easeOutCubic);
       } else {
-        setState(() => _userPaused = true);
+        setState(() {
+          _userPaused = true;
+          _chromeVisible = true;
+        });
       }
     } else {
       setState(() {
         _showEndHint = true;
         _userPaused = true;
+        _chromeVisible = true;
       });
     }
   }
@@ -308,10 +327,41 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
       _userPaused = false;
       _descExpanded = false;
       _showEndHint = false;
+      _chromeVisible = true;
     });
     _completed.remove(ep);
     _pool.retain({_key(ep - 1), _key(ep), _key(ep + 1)});
     _startEpisode(ep, seekSeconds: _resumePointFor(ep));
+  }
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(_chromeTimeout, () {
+      if (mounted && _adGateEpisode == null && (_currentController?.value.isPlaying ?? false)) {
+        setState(() => _chromeVisible = false);
+      }
+    });
+  }
+
+  /// First tap brings the controls back; a tap while they are shown plays/pauses.
+  void _onVideoTap() {
+    if (!_chromeVisible) {
+      setState(() => _chromeVisible = true);
+      _scheduleHide();
+      return;
+    }
+    _togglePlay();
+    if (_userPaused) {
+      _hideTimer?.cancel();
+    } else {
+      _scheduleHide();
+    }
+  }
+
+  /// Keeps the controls on screen while the video is paused or finished.
+  void _pinChrome() {
+    _hideTimer?.cancel();
+    if (!_chromeVisible) setState(() => _chromeVisible = true);
   }
 
   void _togglePlay() {
@@ -320,9 +370,9 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
     if (c.value.isPlaying) {
       c.pause();
       setState(() => _userPaused = true);
+      _pinChrome();
     } else {
       if (c.value.isCompleted) {
-        _completed.remove(_current);
         c.seekTo(Duration.zero);
       }
       c.play();
@@ -357,10 +407,12 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
     if (!notify || saved != value) return;
     messenger
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(loc.t(value ? 'added_to_list' : 'removed_from_list')),
-        duration: const Duration(milliseconds: 1400),
-      ));
+      ..showSnackBar(
+        SnackBar(
+          content: Text(loc.t(value ? 'added_to_list' : 'removed_from_list')),
+          duration: const Duration(milliseconds: 1400),
+        ),
+      );
   }
 
   void _onDoubleTap() {
@@ -443,7 +495,9 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
   Widget build(BuildContext context) {
     final loc = AppLocale(ref.watch(localeProvider));
     if (_total == 0) {
-      return _PlayerShell(child: EmptyView(icon: Icons.movie_filter_rounded, message: loc.t('playback_error')));
+      return _PlayerShell(
+        child: EmptyView(icon: Icons.movie_filter_rounded, message: loc.t('playback_error')),
+      );
     }
 
     return PageView.builder(
@@ -461,13 +515,14 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
     final controller = _pool[_key(ep)];
     final isCurrent = ep == _current;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final chromeOn = !isCurrent || _chromeVisible;
 
     return Stack(
       fit: StackFit.expand,
       children: [
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: _togglePlay,
+          onTap: _onVideoTap,
           onDoubleTapDown: (d) => _heartPos = d.localPosition,
           onDoubleTap: _onDoubleTap,
           onLongPressStart: (_) => _setBoost(true),
@@ -487,9 +542,6 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
             },
           ),
         ),
-
-        // Shades for legibility
-        const IgnorePointer(child: _Shades()),
 
         // Paused indicator
         if (isCurrent && controller != null)
@@ -513,41 +565,159 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
             ),
           ),
 
-        // Top bar
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-              child: Row(
+        // Controls (fade out during playback, tap to bring them back)
+        Positioned.fill(
+          child: IgnorePointer(
+            ignoring: !chromeOn,
+            child: AnimatedOpacity(
+              opacity: chromeOn ? 1 : 0,
+              duration: const Duration(milliseconds: 250),
+              child: Stack(
+                fit: StackFit.expand,
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  Expanded(
-                    child: Text(
-                      "${loc.t('ep')} $ep",
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                  const IgnorePointer(child: _Shades()),
+                  // Top bar
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: SafeArea(
+                      bottom: false,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                            Expanded(
+                              child: Text(
+                                "${loc.t('ep')} $ep",
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: loc.t('subtitles'),
+                              icon: Icon(
+                                settings.subtitles ? Icons.closed_caption_rounded : Icons.closed_caption_off_outlined,
+                                color: Colors.white,
+                              ),
+                              onPressed: () => ref.read(settingsProvider.notifier).setSubtitles(!settings.subtitles),
+                            ),
+                            TextButton(
+                              onPressed: () => _showSpeedMenu(loc),
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size(48, 40),
+                              ),
+                              child: Text(
+                                _speed == 1.0 ? loc.t('speed') : '${_speed}x',
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
-                  IconButton(
-                    tooltip: loc.t('subtitles'),
-                    icon: Icon(
-                      settings.subtitles ? Icons.closed_caption_rounded : Icons.closed_caption_off_outlined,
-                      color: Colors.white,
+                  // Right action rail
+                  PositionedDirectional(
+                    end: 8,
+                    bottom: 130 + bottomInset,
+                    child: Column(
+                      children: [
+                        _RailButton(
+                          icon: isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                          color: isFav ? AppTheme.primary : Colors.white,
+                          label: loc.t(isFav ? 'in_my_list' : 'add_my_list'),
+                          onTap: () => _setFavorite(!isFav),
+                        ),
+                        _RailButton(
+                          icon: Icons.video_library_rounded,
+                          label: '$_current/$_total',
+                          onTap: () => _showEpisodes(loc),
+                        ),
+                      ],
                     ),
-                    onPressed: () => ref.read(settingsProvider.notifier).setSubtitles(!settings.subtitles),
                   ),
-                  TextButton(
-                    onPressed: () => _showSpeedMenu(loc),
-                    style: TextButton.styleFrom(foregroundColor: Colors.white, minimumSize: const Size(48, 40)),
-                    child: Text(
-                      _speed == 1.0 ? loc.t('speed') : '${_speed}x',
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+
+                  // Title, episode & synopsis
+                  PositionedDirectional(
+                    start: 14,
+                    end: 84,
+                    bottom: 84 + bottomInset,
+                    child: GestureDetector(
+                      onTap: () => setState(() => _descExpanded = !_descExpanded),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _detail.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
+                          ),
+                          if (_detail.description.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            AnimatedSize(
+                              duration: const Duration(milliseconds: 200),
+                              alignment: Alignment.topCenter,
+                              child: Text(
+                                _detail.description,
+                                maxLines: _descExpanded ? 8 : 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.35),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // End-of-series hint
+                  if (isCurrent && _showEndHint)
+                    Positioned(
+                      left: 32,
+                      right: 32,
+                      bottom: 200 + bottomInset,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
+                        child: Text(
+                          loc.t('last_episode'),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: InkWell(
+                      onTap: () => _showEpisodes(loc),
+                      child: Container(
+                        height: 48,
+                        margin: EdgeInsets.only(bottom: bottomInset),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        color: Colors.white.withValues(alpha: 0.08),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.layers_rounded, color: Colors.white, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                "${loc.t('all_episodes')} · ${loc.t('ep')} $ep / $_total",
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                              ),
+                            ),
+                            const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white70),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -571,129 +741,32 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
                   children: [
                     const Icon(Icons.fast_forward_rounded, color: Colors.white, size: 18),
                     const SizedBox(width: 6),
-                    Text(loc.t('speed_2x'), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                    Text(
+                      loc.t('speed_2x'),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+                    ),
                   ],
                 ),
               ),
             ),
           ),
 
-        // Right action rail
-        PositionedDirectional(
-          end: 8,
-          bottom: 130 + bottomInset,
-          child: Column(
-            children: [
-              _RailButton(
-                icon: isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-                color: isFav ? AppTheme.primary : Colors.white,
-                label: loc.t(isFav ? 'in_my_list' : 'add_my_list'),
-                onTap: () => _setFavorite(!isFav),
-              ),
-              _RailButton(
-                icon: Icons.video_library_rounded,
-                label: '$_current/$_total',
-                onTap: () => _showEpisodes(loc),
-              ),
-            ],
-          ),
-        ),
-
-        // Title, episode & synopsis
-        PositionedDirectional(
-          start: 14,
-          end: 84,
-          bottom: 84 + bottomInset,
-          child: GestureDetector(
-            onTap: () => setState(() => _descExpanded = !_descExpanded),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  _detail.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
-                ),
-                if (_detail.description.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 200),
-                    alignment: Alignment.topCenter,
-                    child: Text(
-                      _detail.description,
-                      maxLines: _descExpanded ? 8 : 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.35),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-
-        // End-of-series hint
-        if (isCurrent && _showEndHint)
-          Positioned(
-            left: 32,
-            right: 32,
-            bottom: 200 + bottomInset,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(12)),
-              child: Text(
-                loc.t('last_episode'),
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
-
-        // Progress bar + episodes bar
-        Positioned(
+        // Thin progress bar: always visible, slides down when the controls hide
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
           left: 0,
           right: 0,
-          bottom: 0,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (controller != null)
-                Padding(
+          bottom: chromeOn ? 48 + bottomInset : bottomInset,
+          child: controller != null
+              ? Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: VideoProgressBar(controller: controller),
                 )
-              else
-                const SizedBox(height: 20),
-              InkWell(
-                onTap: () => _showEpisodes(loc),
-                child: Container(
-                  height: 48,
-                  margin: EdgeInsets.only(bottom: bottomInset),
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  color: Colors.white.withValues(alpha: 0.08),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.layers_rounded, color: Colors.white, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          "${loc.t('all_episodes')} · ${loc.t('ep')} $ep / $_total",
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
-                        ),
-                      ),
-                      const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white70),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+              : const SizedBox(height: 20),
         ),
 
-        if (isCurrent && _heartPos != null && _heartKey > 0)
-          HeartBurst(key: ValueKey(_heartKey), position: _heartPos!),
+        if (isCurrent && _heartPos != null && _heartKey > 0) HeartBurst(key: ValueKey(_heartKey), position: _heartPos!),
 
         if (isCurrent && _adGateEpisode == ep) Positioned.fill(child: _buildAdGate(loc)),
       ],
@@ -744,12 +817,19 @@ class _EpisodePagerState extends ConsumerState<_EpisodePager> with WidgetsBindin
                         onTap: () => _watchAd(loc),
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
-                          decoration: BoxDecoration(gradient: AppTheme.primaryGradient, borderRadius: BorderRadius.circular(28)),
+                          decoration: BoxDecoration(
+                            gradient: AppTheme.primaryGradient,
+                            borderRadius: BorderRadius.circular(28),
+                          ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (_adLoading)
-                                const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                                const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                                )
                               else
                                 const Icon(Icons.play_circle_fill_rounded, color: Colors.white),
                               const SizedBox(width: 10),
@@ -825,7 +905,12 @@ class _RailButton extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 10),
           child: Column(
             children: [
-              Icon(icon, color: color, size: 34, shadows: const [Shadow(color: Colors.black54, blurRadius: 8)]),
+              Icon(
+                icon,
+                color: color,
+                size: 34,
+                shadows: const [Shadow(color: Colors.black54, blurRadius: 8)],
+              ),
               const SizedBox(height: 3),
               Text(
                 label,

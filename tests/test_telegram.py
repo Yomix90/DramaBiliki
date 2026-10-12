@@ -84,7 +84,7 @@ def test_sync_groups_videos_by_caption(channel, monkeypatch):
     assert love.source_type == "telegram"
     assert love.available_episodes == 3
     assert sorted(e.num for e in love.episodes) == [1, 2, 3]
-    assert {g.name for g in love.genres} == {"Ma Chaîne"}
+    assert love.genres == []  # no automatic category per channel
     assert ch.last_message_id == 14
 
     # Second run only looks at newer messages and is idempotent

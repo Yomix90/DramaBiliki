@@ -140,7 +140,15 @@ async def list_genres(
     lang: str = Query("en"),
     db: Session = Depends(get_db),
 ):
-    genres = db.query(Genre).all()
+    # Only categories that contain at least one visible series become app tabs.
+    genres = (
+        db.query(Genre)
+        .join(Genre.series)
+        .filter(Series.status == "active")
+        .distinct()
+        .order_by(Genre.id)
+        .all()
+    )
     return [
         GenreOut(id=g.id, slug=g.slug, name=g.get_name(lang))
         for g in genres

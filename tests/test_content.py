@@ -222,3 +222,29 @@ def test_upload_rejects_fragment_and_series_check_flags_it(client):
     ep_id = SessionLocal().query(Episode).filter(Episode.series_id == series_id).one().id
     client.post(f"/admin/series/{series_id}/delete-episodes", data={"episode_id": str(ep_id)})
     assert SessionLocal().query(Episode).filter(Episode.series_id == series_id).count() == 0
+
+
+def test_genres_api_hides_empty_categories_and_admin_page(client):
+    from bridge.models import Genre
+    db = SessionLocal()
+    try:
+        db.add(Genre(slug=f"empty-{uuid.uuid4().hex[:5]}", name="Empty Genre"))
+        db.commit()
+    finally:
+        db.close()
+    names = [g["name"] for g in client.get("/api/v1/genres").json()]
+    assert "Empty Genre" not in names
+    admin_login(client)
+    page = client.get("/admin/genres")
+    assert page.status_code == 200 and "Empty Genre" in page.text
+
+
+def test_apk_download_keeps_content_length(client, tmp_path):
+    from bridge.api.v1.routes_app import APK_DIR, LATEST_APK
+    APK_DIR.mkdir(parents=True, exist_ok=True)
+    LATEST_APK.write_bytes(b"PK" + b"x" * 5000)
+    r = client.get("/download/app.apk", headers={"Accept-Encoding": "gzip"})
+    assert r.status_code == 200
+    assert r.headers.get("content-length") == "5002" and "content-encoding" not in r.headers
+    # JSON is still compressed
+    assert client.get("/api/v1/genres", headers={"Accept-Encoding": "gzip"}).status_code == 200

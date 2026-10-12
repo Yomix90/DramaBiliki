@@ -38,6 +38,15 @@ async def lifespan(app: FastAPI):
         db.close()
 
     cleanup_tmp_dir()
+    db = SessionLocal()
+    try:
+        from bridge.models import Genre
+        for genre in db.query(Genre).filter(Genre.slug.like("tg-%")).all():
+            genre.series = []  # categories formerly auto-created per Telegram channel
+            db.delete(genre)
+        db.commit()
+    finally:
+        db.close()
 
     if not settings.admin_login_allowed:
         logger.warning("Admin panel is LOCKED: set a non-default ADMIN_PASSWORD environment variable to enable it.")
@@ -73,8 +82,24 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Compression
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+# Compression for API/HTML only: videos, covers and the APK are already compressed,
+# and gzip would drop their Content-Length (download progress, HTTP Range seeking).
+_NO_GZIP_PREFIXES = ("/stream", "/download", "/media", "/subtitles")
+
+
+class SelectiveGZipMiddleware:
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1000)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope.get("path", "").startswith(_NO_GZIP_PREFIXES):
+            await self.app(scope, receive, send)
+        else:
+            await self.gzip(scope, receive, send)
+
+
+app.add_middleware(SelectiveGZipMiddleware)
 
 # CORS configuration (the API uses bearer tokens, not cookies, so credentials are not needed)
 app.add_middleware(

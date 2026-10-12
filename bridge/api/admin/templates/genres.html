@@ -1,0 +1,55 @@
+{% extends "_base.html" %}
+{% set active = 'genres' %}
+{% block title %}Genres — DramaBiliki Admin{% endblock %}
+{% block page_title %}Genres{% endblock %}
+{% block page_sub %}Les onglets de catégories affichés en haut de l'accueil de l'application{% endblock %}
+{% block content %}
+<div class="row g-3">
+    <div class="col-lg-4">
+        <form class="card p-3" method="post" action="/admin/genres/new">
+            <h2 class="card-title-sm mb-3"><i class="bi bi-plus-circle"></i> Nouveau genre</h2>
+            <input name="name" class="form-control mb-2" placeholder="ex. Romance" required>
+            <button class="btn btn-brand w-100">Créer</button>
+            <p class="small text-secondary mt-3 mb-0">
+                Un genre n'apparaît dans l'application que s'il contient au moins une série visible.
+                Attribuez les genres depuis la fiche de chaque série.
+            </p>
+        </form>
+    </div>
+    <div class="col-lg-8">
+        <div class="card p-3">
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th>Nom (EN)</th><th>FR</th><th>AR</th><th>Séries</th><th class="text-end">Actions</th></tr></thead>
+                    <tbody>
+                    {% for row in rows %}
+                        {% set g = row.genre %}
+                        <tr>
+                            <td colspan="3" class="p-0">
+                                <form id="g{{ g.id }}" method="post" action="/admin/genres/{{ g.id }}/save" class="row g-2 m-0 py-2">
+                                    <div class="col-4"><input name="name" class="form-control form-control-sm" value="{{ g.name }}" required></div>
+                                    <div class="col-4"><input name="name_fr" class="form-control form-control-sm" value="{{ (g.names_json or {}).get('fr', '') }}" placeholder="—"></div>
+                                    <div class="col-4"><input name="name_ar" class="form-control form-control-sm" dir="rtl" value="{{ (g.names_json or {}).get('ar', '') }}" placeholder="—"></div>
+                                </form>
+                            </td>
+                            <td>
+                                <span class="fw-semibold">{{ row.visible }}</span><span class="text-secondary small"> / {{ row.total }}</span>
+                                {% if row.visible == 0 %}<div><span class="badge text-bg-secondary">masqué dans l'app</span></div>{% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                <button form="g{{ g.id }}" class="btn btn-sm btn-outline-light" title="Enregistrer"><i class="bi bi-save"></i></button>
+                                <form method="post" action="/admin/genres/{{ g.id }}/delete" class="d-inline" onsubmit="return confirm('Supprimer le genre « {{ g.name }} » ? Les séries sont conservées.')">
+                                    <button class="btn btn-sm btn-outline-danger" title="Supprimer"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="5"><div class="empty-state"><i class="bi bi-tags"></i>Aucun genre.</div></td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

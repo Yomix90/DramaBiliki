@@ -472,3 +472,51 @@ async def app_ads(
         "ads_rewarded_unit_id": unit_id.strip(),
     })
     return _back("/admin/app", "Réglages publicitaires enregistrés")
+
+
+# ---------------------------------------------------------------------------
+# Genres (the category tabs of the app)
+# ---------------------------------------------------------------------------
+
+@router.get("/genres", response_class=HTMLResponse)
+async def genres_page(request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    rows = []
+    for genre in db.query(Genre).order_by(Genre.name).all():
+        visible = sum(1 for s in genre.series if s.status == "active")
+        rows.append({"genre": genre, "total": len(genre.series), "visible": visible})
+    return _page(request, "genres.html", admin=admin, rows=rows)
+
+
+@router.post("/genres/new")
+async def genre_create(name: str = Form(...), db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    created = _genres_from_text(db, name)
+    db.commit()
+    return _back("/admin/genres", "Genre créé" if created else "Nom invalide", "success" if created else "danger")
+
+
+@router.post("/genres/{genre_id}/save")
+async def genre_save(
+    genre_id: int,
+    name: str = Form(...),
+    name_fr: str = Form(""),
+    name_ar: str = Form(""),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    genre = db.get(Genre, genre_id)
+    if genre is None:
+        return _back("/admin/genres", "Genre introuvable", "danger")
+    genre.name = name.strip()[:64] or genre.name
+    genre.names_json = {k: v.strip()[:64] for k, v in {"en": genre.name, "fr": name_fr, "ar": name_ar}.items() if v.strip()}
+    db.commit()
+    return _back("/admin/genres", f"Genre « {genre.name} » enregistré")
+
+
+@router.post("/genres/{genre_id}/delete")
+async def genre_delete(genre_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    genre = db.get(Genre, genre_id)
+    if genre is not None:
+        genre.series = []
+        db.delete(genre)
+        db.commit()
+    return _back("/admin/genres", "Genre supprimé (les séries sont conservées)")

@@ -10,55 +10,6 @@ import '../auth/auth_screen.dart';
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
-  void _showServerUrlDialog(BuildContext context, WidgetRef ref, AppLocale loc) {
-    final prefs = ref.read(preferencesProvider);
-    final textController = TextEditingController(text: prefs.getBaseUrl());
-
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(loc.t('server_url'), style: const TextStyle(fontSize: 18)),
-          content: TextField(
-            controller: textController,
-            keyboardType: TextInputType.url,
-            autocorrect: false,
-            style: const TextStyle(color: Colors.white),
-            decoration: const InputDecoration(hintText: AppConstants.defaultBaseUrl),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: Text(loc.t('cancel'), style: const TextStyle(color: AppTheme.textSecondary)),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                var url = textController.text.trim();
-                while (url.endsWith('/')) {
-                  url = url.substring(0, url.length - 1);
-                }
-                if (Uri.tryParse(url)?.hasScheme != true) return;
-                await prefs.setBaseUrl(url);
-                // A token from another server is meaningless here: re-register on next call.
-                await prefs.clearAuthToken();
-                ref.read(apiClientProvider).updateBaseUrl(url);
-                ref.invalidate(authInitProvider);
-                refreshWatchState(ref);
-                ref.invalidate(genresProvider);
-                ref.invalidate(pagedSeriesProvider);
-                if (dialogContext.mounted) Navigator.pop(dialogContext);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(loc.t('server_url_updated'))));
-                }
-              },
-              child: Text(loc.t('save')),
-            ),
-          ],
-        );
-      },
-    ).whenComplete(textController.dispose);
-  }
-
   void _showLanguagePicker(BuildContext context, WidgetRef ref, AppLocale loc, String current) {
     showModalBottomSheet<void>(
       context: context,
@@ -227,13 +178,6 @@ class SettingsScreen extends ConsumerWidget {
               subtitle: Text(loc.t('data_saver_desc'), style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
               value: settings.dataSaver,
               onChanged: (v) => ref.read(settingsProvider.notifier).setDataSaver(v),
-            ),
-            ListTile(
-              leading: const Icon(Icons.dns_rounded, color: AppTheme.textSecondary),
-              title: Text(loc.t('server_url'), style: const TextStyle(fontSize: 14)),
-              subtitle: Text(prefs.getBaseUrl(), style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
-              trailing: const Icon(Icons.edit_rounded, color: AppTheme.primary, size: 18),
-              onTap: () => _showServerUrlDialog(context, ref, loc),
             ),
           ]),
           const SizedBox(height: 24),

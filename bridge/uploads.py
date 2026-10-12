@@ -296,7 +296,6 @@ async def _process(job: UploadJob) -> None:
             series = _find_series_by_title(db, title)
             if series is None:
                 series = create_series(db, title)
-                series.genres.append(_upload_genre(db))
                 db.commit()
         series_id = series.id
         used = {n for (n,) in db.query(Episode.num).filter(Episode.series_id == series_id)}

@@ -2,11 +2,13 @@
     <!-- Required in release builds to reach the Bridge API and the video CDNs. -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- In-app updates: download the new APK and open the system installer -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <application
         android:label="DramaBiliki"
         android:usesCleartextTraffic="true"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/launcher_icon">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -34,6 +36,21 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- In-app updates (ota_update) -->
+        <provider
+            android:name="sk.fourq.otaupdate.OtaUpdateFileProvider"
+            android:authorities="${applicationId}.ota_update_provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/filepaths" />
+        </provider>
+        <receiver android:name="sk.fourq.otaupdate.InstallResultReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="${applicationId}.ACTION_INSTALL_COMPLETE"/>
+            </intent-filter>
+        </receiver>
         <!-- AdMob app id: Google's test id unless built with -PADMOB_APP_ID=ca-app-pub-...~... -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
