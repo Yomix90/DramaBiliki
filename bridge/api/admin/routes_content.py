@@ -314,6 +314,7 @@ async def uploads_init(request: Request, admin: str = Depends(require_admin)):
             series_id=int(payload["series_id"]) if str(payload.get("series_id") or "").isdigit() else None,
             episode=int(payload["episode"]) if str(payload.get("episode") or "").isdigit() else None,
             title=str(payload.get("title") or ""),
+            meta_id=str(payload.get("meta_id") or ""),
         )
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -680,3 +681,59 @@ async def backup_restore(
         + (" Reconnectez-vous à l'admin." if summary["secret_restored"] else ""),
     )
     return response
+
+
+# ---------------------------------------------------------------------------
+# Series information files (title, synopsis, genres...) sent with the episodes
+# ---------------------------------------------------------------------------
+
+@router.post("/metadata/parse")
+async def metadata_parse(file: UploadFile = File(...), admin: str = Depends(require_admin)):
+    """Reads an info file and returns its fields (used to pre-fill the series form)."""
+    from bridge.metadata import parse_metadata
+    try:
+        meta = parse_metadata(file.filename or "", await file.read(512 * 1024 + 1))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return JSONResponse(meta)
+
+
+@router.post("/uploads/metadata")
+async def uploads_metadata(
+    file: UploadFile = File(...),
+    cover: Optional[UploadFile] = File(None),
+    admin: str = Depends(require_admin),
+):
+    """Registers the info file (and optional poster) of an upload batch."""
+    from bridge.metadata import parse_metadata
+    try:
+        meta = parse_metadata(file.filename or "", await file.read(512 * 1024 + 1))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    cover_bytes = None
+    if cover is not None and cover.filename:
+        cover_bytes = await cover.read(MAX_COVER_BYTES + 1)
+        if len(cover_bytes) > MAX_COVER_BYTES:
+            return JSONResponse({"error": "Affiche trop lourde (8 Mo maximum)"}, status_code=400)
+    return JSONResponse({"id": uploads.register_metadata(meta, cover_bytes), "meta": meta, "has_cover": bool(cover_bytes)})
+
+
+@router.post("/series/{series_id}/metadata")
+async def series_metadata(
+    series_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    """Applies an info file directly to an existing series."""
+    from bridge.metadata import apply_metadata, parse_metadata
+    series = db.get(Series, series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="Série introuvable")
+    try:
+        meta = parse_metadata(file.filename or "", await file.read(512 * 1024 + 1))
+    except ValueError as e:
+        return _back(f"/admin/series/{series_id}", str(e), "danger")
+    apply_metadata(db, series, meta)
+    db.commit()
+    return _back(f"/admin/series/{series_id}", "Informations importées depuis le fichier : " + ", ".join(sorted(meta)))

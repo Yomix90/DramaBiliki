@@ -324,3 +324,75 @@ def test_chunked_apk_upload_then_settings(client):
     job = client.post("/admin/app/apk/init", json={"size": 2048}).json()
     client.put(f"/admin/app/apk/{job['id']}?offset=0", content=b"x" * 2048)
     assert client.post(f"/admin/app/apk/{job['id']}/complete").status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Series information files
+# ---------------------------------------------------------------------------
+
+def test_parse_example_info_files():
+    from pathlib import Path
+    from bridge.metadata import parse_metadata
+    root = Path(__file__).resolve().parent.parent / "docs" / "exemples"
+    for name in ("info.txt", "info.json"):
+        meta = parse_metadata(name, (root / name).read_bytes())
+        assert meta["title"] == "Harem Wars - System vs. Queen"
+        assert meta["genres"] == ["Romance", "Historique", "Vengeance", "Palais"]
+        assert meta["description"] and meta["title_fr"] and meta["title_ar"]
+        assert meta["rating"] == 4.8 and meta["release_year"] == 2024
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_batch_upload_applies_info_file(client, tmp_path):
+    admin_login(client)
+    app_settings.set_many({"upload_destination": "local", "upload_convert_ts": "true"})
+    title = f"Info Drama {uuid.uuid4().hex[:5]}"
+    info = f"Titre: {title}\nGenres: Romance, Vengeance\nNote: 4.2\nSynopsis:\nLigne 1\nLigne 2\n".encode()
+    meta = client.post("/admin/uploads/metadata",
+                       files={"file": ("info.txt", info), "cover": ("cover.png", _png_bytes(), "image/png")}).json()
+    assert meta["meta"]["title"] == title and meta["has_cover"]
+
+    src = tmp_path / "ep.ts"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=360x640:rate=25",
+                    "-f", "lavfi", "-i", "sine=frequency=440", "-t", "2", "-c:v", "libx264", "-c:a", "aac",
+                    "-f", "mpegts", str(src)], check=True)
+    data = src.read_bytes()
+    # The file name carries another title: the info file wins
+    job = client.post("/admin/uploads/init", json={"filename": "whatever - S01E02.ts", "size": len(data),
+                                                   "mode": "auto", "meta_id": meta["id"]}).json()
+    client.put(f"/admin/uploads/{job['id']}?offset=0", content=data)
+    client.post(f"/admin/uploads/{job['id']}/complete")
+    for _ in range(100):
+        status = next(j for j in client.get("/admin/uploads/jobs").json() if j["id"] == job["id"])
+        if status["status"] in ("done", "error"):
+            break
+        time.sleep(0.1)
+    assert status["status"] == "done", status
+    db = SessionLocal()
+    try:
+        s = db.get(Series, status["result_series_id"])
+        assert s.title == title and s.description == "Ligne 1\nLigne 2" and s.rating == 4.2
+        assert sorted(g.name for g in s.genres) == ["Romance", "Vengeance"] and s.local_cover
+    finally:
+        db.close()
+
+
+def test_series_form_info_file_endpoints(client):
+    admin_login(client)
+    r = client.post("/admin/metadata/parse", files={"file": ("i.json", b'{"title":"T","genres":"A, B"}')})
+    assert r.json() == {"title": "T", "genres": ["A", "B"]}
+    assert client.post("/admin/metadata/parse", files={"file": ("i.txt", b"rien")}).status_code == 400
+    db = SessionLocal()
+    try:
+        from bridge import uploads
+        sid = uploads.create_series(db, f"Plain {uuid.uuid4().hex[:5]}").id
+        db.commit()
+    finally:
+        db.close()
+    client.post(f"/admin/series/{sid}/metadata", files={"file": ("i.txt", "Synopsis: Résumé\nGenres: Drame".encode())})
+    db = SessionLocal()
+    try:
+        s = db.get(Series, sid)
+        assert s.description == "Résumé" and [g.name for g in s.genres] == ["Drame"]
+    finally:
+        db.close()

@@ -26,6 +26,11 @@
                     {% if not series %}<div class="small text-secondary mt-2">Sans image, la miniature du premier épisode téléversé sera utilisée.</div>{% endif %}
                 </div>
             </div>
+            <div class="mb-3 p-2 rounded" style="background:var(--surface2);border:1px dashed var(--border2)">
+                <label class="form-label small mb-1" for="infoFile"><i class="bi bi-file-earmark-text"></i> Remplir depuis un fichier d'informations (<code>.txt</code> / <code>.json</code>)</label>
+                <input type="file" id="infoFile" accept=".txt,.json,.nfo,.md" class="form-control form-control-sm">
+                <div class="small mt-1" id="infoStatus"></div>
+            </div>
             <div class="mb-2">
                 <label class="form-label small text-secondary">Titre (EN / principal) *</label>
                 <input name="title" class="form-control" required value="{{ series.title if series else '' }}">
@@ -128,4 +133,25 @@
     </div>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Pre-fills the form from an info file; nothing is saved until "Enregistrer".
+document.getElementById('infoFile').addEventListener('change', async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const status = document.getElementById('infoStatus');
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/admin/metadata/parse', {method: 'POST', body: fd});
+    const meta = await res.json();
+    if (!res.ok) { status.innerHTML = `<span class="text-danger">${meta.error}</span>`; return; }
+    const form = ev.target.closest('form');
+    const set = (name, value) => { const el = form.elements[name]; if (el && value !== undefined && value !== null && value !== '') el.value = value; };
+    ['title', 'title_fr', 'title_ar', 'description', 'description_fr', 'description_ar', 'platform', 'rating', 'release_year'].forEach(k => set(k, meta[k]));
+    if (meta.genres) set('genres', meta.genres.join(', '));
+    status.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> Champs remplis (${Object.keys(meta).length}) — vérifiez puis cliquez « Enregistrer ».</span>`;
+});
+</script>
 {% endblock %}

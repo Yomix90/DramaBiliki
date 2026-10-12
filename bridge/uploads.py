@@ -25,6 +25,7 @@ from bridge import app_settings
 from bridge.config import settings
 from bridge.database import SessionLocal
 from bridge.media import save_cover_image
+from bridge.metadata import apply_metadata
 from bridge.models import Episode, Genre, Series, TelegramChannel
 from bridge.parsing import VIDEO_EXTENSIONS, parse_video_name, series_title_with_season
 from bridge.video_check import HEADER_BYTES, check_header
@@ -55,6 +56,7 @@ class UploadJob:
     episode: Optional[int] = None
     detected_title: str = ""
     title_override: str = ""
+    meta_id: str = ""
     result_series_id: Optional[int] = None
     result_episode: Optional[int] = None
     created_at: float = field(default_factory=time.time)
@@ -78,6 +80,18 @@ class UploadJob:
 
 
 _jobs: Dict[str, UploadJob] = {}
+
+# Information files sent with a batch: id -> {"meta": dict, "cover": bytes | None, "applied": set of series ids}
+_metadata: Dict[str, dict] = {}
+
+
+def register_metadata(meta: dict, cover: Optional[bytes] = None) -> str:
+    meta_id = uuid.uuid4().hex
+    _metadata[meta_id] = {"meta": meta, "cover": cover, "applied": set(), "created": time.time()}
+    for key, value in list(_metadata.items()):
+        if time.time() - value["created"] > JOB_RETENTION_SECONDS:
+            _metadata.pop(key, None)
+    return meta_id
 _queue: Optional[asyncio.Queue] = None
 _workers: List[asyncio.Task] = []
 
@@ -122,7 +136,7 @@ def _find_series_by_title(db, title: str) -> Optional[Series]:
 # ---------------------------------------------------------------------------
 
 def create_job(filename: str, size: int, mode: str = "auto", series_id: Optional[int] = None,
-               episode: Optional[int] = None, title: str = "") -> UploadJob:
+               episode: Optional[int] = None, title: str = "", meta_id: str = "") -> UploadJob:
     _cleanup_old_jobs()
     safe_name = os.path.basename(filename or "video.mp4")[:200]
     if Path(safe_name).suffix.lower() not in VIDEO_EXTENSIONS:
@@ -136,7 +150,8 @@ def create_job(filename: str, size: int, mode: str = "auto", series_id: Optional
     UPLOAD_TMP_DIR.mkdir(parents=True, exist_ok=True)
     job = UploadJob(id=uuid.uuid4().hex, filename=safe_name, size=size,
                     mode=mode if mode in ("auto", "series") else "auto",
-                    series_id=series_id, episode=episode, title_override=(title or "").strip()[:200])
+                    series_id=series_id, episode=episode, title_override=(title or "").strip()[:200],
+                    meta_id=meta_id if meta_id in _metadata else "")
     job.path.touch()
     _jobs[job.id] = job
     return job
@@ -281,7 +296,9 @@ async def _process(job: UploadJob) -> None:
     # 1. Target series and episode number
     parsed = parse_video_name(job.filename, is_filename=True)
     title = series_title_with_season(parsed.title, parsed.season) if parsed.title else None
-    title = job.title_override or title
+    batch_meta = _metadata.get(job.meta_id) if job.meta_id else None
+    meta_title = str(batch_meta["meta"].get("title") or "") if batch_meta else ""
+    title = job.title_override or meta_title or title
     job.touch(detected_title=title or "")
 
     db = SessionLocal()
@@ -298,6 +315,15 @@ async def _process(job: UploadJob) -> None:
                 series = create_series(db, title)
                 db.commit()
         series_id = series.id
+        if batch_meta and series_id not in batch_meta["applied"]:
+            # Title, synopsis, genres... from the information file sent with the batch
+            apply_metadata(db, series, batch_meta["meta"])
+            if batch_meta["cover"]:
+                name = save_cover_image(series.source_id, batch_meta["cover"])
+                if name:
+                    series.local_cover = name
+            db.commit()
+            batch_meta["applied"].add(series_id)
         used = {n for (n,) in db.query(Episode.num).filter(Episode.series_id == series_id)}
         ep_num = job.episode or parsed.episode or ((max(used) + 1) if used else 1)
         needs_cover = not series.local_cover

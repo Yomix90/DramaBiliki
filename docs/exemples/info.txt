@@ -1,0 +1,23 @@
+# Fichier d'informations DramaBiliki
+# Glissez-le dans Admin -> Téléverser avec les épisodes (et une image d'affiche si vous voulez).
+# Une information par ligne "Nom: valeur". Les lignes commençant par # sont ignorées.
+# Seuls Titre, Synopsis et Genres sont utiles ; les autres lignes sont facultatives.
+
+Titre: Harem Wars - System vs. Queen
+Titre FR: La Guerre du Harem : Le Système contre la Reine
+Titre AR: حرب الحريم: النظام ضد الملكة
+
+Genres: Romance, Historique, Vengeance, Palais
+
+Note: 4.8
+Année: 2024
+Plateforme: DramaBiliki
+
+Synopsis:
+Une simple servante du palais se réveille avec un mystérieux « système » qui lui dicte
+chacun de ses gestes. Pour survivre aux intrigues du harem, elle devra affronter la
+redoutable Reine, déjouer les complots des concubines et conquérir le cœur de l'Empereur.
+
+Synopsis FR: Une servante dotée d'un « système » secret affronte la Reine pour survivre au harem impérial.
+
+Synopsis AR: خادمة بسيطة في القصر تستيقظ لتجد «نظاماً» غامضاً يوجهها، فتواجه الملكة وتنجو من مؤامرات الحريم.

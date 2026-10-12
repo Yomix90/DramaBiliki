@@ -78,8 +78,11 @@
                 <i class="bi bi-cloud-arrow-up fs-1 text-secondary"></i>
                 <div class="fw-semibold mt-2">Glissez vos vidéos ici ou cliquez pour choisir</div>
                 <div class="small text-secondary">MP4, TS, MKV, MOV… plusieurs fichiers à la fois</div>
-                <input type="file" id="files" multiple accept="video/*,.ts,.mkv,.m2ts,.mts" hidden>
+                <div class="small text-secondary mt-1"><i class="bi bi-info-circle"></i> Ajoutez aussi un fichier <code>info.txt</code> / <code>info.json</code> (titre, synopsis, genres) et une image d'affiche : ils seront appliqués à la série.</div>
+                <input type="file" id="files" multiple accept="video/*,.ts,.mkv,.m2ts,.mts,.txt,.json,.nfo,image/*" hidden>
             </label>
+
+            <div id="metaCard" class="d-none mb-3 p-3 rounded" style="background:var(--surface2);border:1px solid var(--border)"></div>
 
             <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
                 <button class="btn btn-sm btn-brand" id="startBtn" disabled><i class="bi bi-play-fill"></i> Lancer le téléversement</button>
@@ -117,8 +120,56 @@ $('files').addEventListener('change', ev => { addFiles(ev.target.files); ev.targ
 $('clearBtn').addEventListener('click', () => { if (running) return; items.length = 0; render(); });
 $('startBtn').addEventListener('click', start);
 
+const META_EXT = ['.txt', '.json', '.nfo', '.md'];
+const IMG_EXT = ['.jpg', '.jpeg', '.png', '.webp'];
+const extOf = (name) => (name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+let batchMeta = null;   // {id, meta, has_cover} returned by the server
+
+async function loadMeta(metaFile, coverFile) {
+    const fd = new FormData();
+    fd.append('file', metaFile);
+    if (coverFile) fd.append('cover', coverFile);
+    const res = await fetch('/admin/uploads/metadata', {method: 'POST', body: fd});
+    const data = await res.json();
+    const card = $('metaCard');
+    card.classList.remove('d-none');
+    if (!res.ok) {
+        batchMeta = null;
+        card.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> ${esc(metaFile.name)} : ${esc(data.error)}</span>`;
+        return;
+    }
+    batchMeta = data;
+    const m = data.meta;
+    card.innerHTML = `
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div class="small">
+                <div class="fw-semibold text-white mb-1"><i class="bi bi-file-earmark-text"></i> Informations lues dans ${esc(metaFile.name)}
+                    ${data.has_cover ? `<span class="badge text-bg-success ms-1"><i class="bi bi-image"></i> affiche : ${esc(coverFile.name)}</span>` : ''}</div>
+                ${m.title ? `<div><span class="text-secondary">Titre :</span> ${esc(m.title)}</div>` : ''}
+                ${m.genres ? `<div><span class="text-secondary">Genres :</span> ${m.genres.map(esc).join(', ')}</div>` : ''}
+                ${m.rating ? `<div><span class="text-secondary">Note :</span> ${m.rating}</div>` : ''}
+                ${m.release_year ? `<div><span class="text-secondary">Année :</span> ${m.release_year}</div>` : ''}
+                ${m.description ? `<div class="text-secondary mt-1" style="max-height:4.5em;overflow:hidden">${esc(m.description)}</div>` : ''}
+                <div class="text-success mt-1">Ces informations seront appliquées à la série de ce lot.</div>
+            </div>
+            <button type="button" class="btn btn-sm btn-link text-secondary p-0" onclick="clearMeta()" title="Retirer"><i class="bi bi-x-lg"></i></button>
+        </div>`;
+    if (m.title) {
+        items.forEach(i => { if (i.state === 'pending') i.title = m.title; });
+        render();
+    }
+}
+
+function clearMeta() { batchMeta = null; $('metaCard').classList.add('d-none'); }
+
 async function addFiles(fileList) {
-    const files = [...fileList].filter(f => !items.some(i => i.file.name === f.name && i.file.size === f.size));
+    const all = [...fileList];
+    const metaFile = all.find(f => META_EXT.includes(extOf(f.name)));
+    const coverFile = all.find(f => IMG_EXT.includes(extOf(f.name)));
+    if (metaFile) await loadMeta(metaFile, coverFile);
+    const files = all.filter(f => !META_EXT.includes(extOf(f.name)) && !IMG_EXT.includes(extOf(f.name)))
+                     .filter(f => !items.some(i => i.file.name === f.name && i.file.size === f.size));
     if (!files.length) return;
     const res = await fetch('/admin/uploads/detect', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -127,7 +178,7 @@ async function addFiles(fileList) {
     const detections = res.ok ? await res.json() : [];
     files.forEach((file, i) => {
         const d = detections[i] || {};
-        items.push({file, title: d.title || '', episode: d.episode || '', existing: d.existing_series, supported: d.supported !== false,
+        items.push({file, title: (batchMeta && batchMeta.meta.title) || d.title || '', episode: d.episode || '', existing: d.existing_series, supported: d.supported !== false,
                     state: 'pending', sent: 0, jobId: null, server: null, error: ''});
     });
     items.sort((a, b) => (a.title || '').localeCompare(b.title || '') || (a.episode || 0) - (b.episode || 0));
@@ -202,7 +253,8 @@ async function uploadOne(it) {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({filename: it.file.name, size: it.file.size, mode,
                               series_id: mode === 'series' ? $('seriesId').value : null,
-                              episode: it.episode || null, title: mode === 'auto' ? it.title : ''}),
+                              episode: it.episode || null, title: mode === 'auto' ? it.title : '',
+                              meta_id: batchMeta ? batchMeta.id : null}),
     });
     const data = await init.json();
     if (!init.ok) throw new Error(data.error || 'Initialisation refusée');
