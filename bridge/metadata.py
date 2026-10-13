@@ -37,6 +37,7 @@ _ALIASES: Dict[str, List[str]] = {
     "rating": ["note", "rating", "score", "التقييم"],
     "release_year": ["annee", "year", "release year", "date", "سنة", "السنة"],
     "platform": ["plateforme", "platform", "studio", "source", "chaine", "المنصة"],
+    "cover_url": ["couverture", "cover", "affiche", "poster", "image", "thumbnail", "cover url", "url couverture", "الغلاف", "الصورة"],
 }
 _MULTILINE = {"description", "description_fr", "description_ar"}
 
@@ -89,6 +90,9 @@ def _clean(meta: Dict[str, object]) -> Dict[str, object]:
         value = str(meta.get(field) or "").strip()
         if value:
             out[field] = value[:200]
+    cover = str(meta.get("cover_url") or "").strip()
+    if re.match(r"^https?://\S+$", cover):
+        out["cover_url"] = cover[:500]
     for field in _MULTILINE:
         value = str(meta.get(field) or "").strip()
         if value:
@@ -219,3 +223,41 @@ def apply_metadata(db: Session, series: Series, meta: Dict[str, object]) -> None
         series.release_year = int(meta["release_year"])
     if meta.get("platform"):
         series.platform = str(meta["platform"])[:64]
+    if meta.get("cover_url") and not series.local_cover:
+        # Fallback when the image could not be downloaded: the app loads it from its URL
+        series.cover_url = str(meta["cover_url"])
+
+
+MAX_COVER_DOWNLOAD = 8 * 1024 * 1024
+_BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+)
+
+
+async def download_cover(url: str) -> Optional[bytes]:
+    """Fetches the poster given by 'Couverture:' like a browser would; None on failure."""
+    import httpx
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    headers = {
+        "User-Agent": _BROWSER_UA,
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": f"{parsed.scheme}://{parsed.hostname}/",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("image/"):
+                    return None
+                data = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > MAX_COVER_DOWNLOAD:
+                        return None
+                return bytes(data)
+    except httpx.HTTPError:
+        return None

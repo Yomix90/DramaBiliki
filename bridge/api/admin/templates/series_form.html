@@ -150,6 +150,7 @@ document.getElementById('infoFile').addEventListener('change', async (ev) => {
     const form = ev.target.closest('form');
     const set = (name, value) => { const el = form.elements[name]; if (el && value !== undefined && value !== null && value !== '') el.value = value; };
     ['title', 'title_fr', 'title_ar', 'description', 'description_fr', 'description_ar', 'platform', 'rating', 'release_year'].forEach(k => set(k, meta[k]));
+    if (meta.cover_url) { set('cover_url', meta.cover_url); const img = document.getElementById('coverPreview'); if (img) img.src = meta.cover_url; }
     if (meta.genres) set('genres', meta.genres.join(', '));
     status.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> Champs remplis (${Object.keys(meta).length}) — vérifiez puis cliquez « Enregistrer ».</span>`;
 });

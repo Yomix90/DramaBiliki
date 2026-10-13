@@ -710,12 +710,23 @@ async def uploads_metadata(
         meta = parse_metadata(file.filename or "", await file.read(512 * 1024 + 1))
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    cover_bytes = None
+    from bridge.metadata import download_cover
+    cover_bytes, cover_source = None, ""
     if cover is not None and cover.filename:
         cover_bytes = await cover.read(MAX_COVER_BYTES + 1)
         if len(cover_bytes) > MAX_COVER_BYTES:
             return JSONResponse({"error": "Affiche trop lourde (8 Mo maximum)"}, status_code=400)
-    return JSONResponse({"id": uploads.register_metadata(meta, cover_bytes), "meta": meta, "has_cover": bool(cover_bytes)})
+        cover_source = cover.filename
+    elif meta.get("cover_url"):
+        cover_bytes = await download_cover(str(meta["cover_url"]))
+        cover_source = "téléchargée depuis « Couverture »" if cover_bytes else ""
+    return JSONResponse({
+        "id": uploads.register_metadata(meta, cover_bytes),
+        "meta": meta,
+        "has_cover": bool(cover_bytes),
+        "cover_source": cover_source,
+        "cover_url_failed": bool(meta.get("cover_url") and not cover_bytes),
+    })
 
 
 @router.post("/series/{series_id}/metadata")
@@ -735,5 +746,11 @@ async def series_metadata(
     except ValueError as e:
         return _back(f"/admin/series/{series_id}", str(e), "danger")
     apply_metadata(db, series, meta)
+    if meta.get("cover_url"):
+        from bridge.metadata import download_cover
+        data = await download_cover(str(meta["cover_url"]))
+        name = save_cover_image(series.source_id, data) if data else None
+        if name:
+            series.local_cover = name
     db.commit()
     return _back(f"/admin/series/{series_id}", "Informations importées depuis le fichier : " + ", ".join(sorted(meta)))

@@ -396,3 +396,37 @@ def test_series_form_info_file_endpoints(client):
         assert s.description == "Résumé" and [g.name for g in s.genres] == ["Drame"]
     finally:
         db.close()
+
+
+def test_info_file_cover_url(client, monkeypatch):
+    import bridge.metadata as md
+    from bridge.metadata import parse_metadata
+    info = ("Titre: Cover Drama\nTitre FR: \nCouverture: https://cdn.example.com/c/480.webp\n"
+            "Genres: Action\nNote: \nSynopsis:\nLigne\n\nSynopsis FR: \n").encode()
+    meta = parse_metadata("info.txt", info)
+    assert meta == {"title": "Cover Drama", "cover_url": "https://cdn.example.com/c/480.webp",
+                    "genres": ["Action"], "description": "Ligne"}
+
+    admin_login(client)
+    # Download works: the poster is stored for the batch
+    async def ok(url):
+        return _png_bytes()
+    monkeypatch.setattr(md, "download_cover", ok)
+    r = client.post("/admin/uploads/metadata", files={"file": ("info.txt", info)}).json()
+    assert r["has_cover"] and not r["cover_url_failed"]
+
+    # Download fails: the URL is kept so the app loads the image directly
+    async def ko(url):
+        return None
+    monkeypatch.setattr(md, "download_cover", ko)
+    r = client.post("/admin/uploads/metadata", files={"file": ("info.txt", info)}).json()
+    assert not r["has_cover"] and r["cover_url_failed"]
+    db = SessionLocal()
+    try:
+        from bridge import uploads
+        s = uploads.create_series(db, "Cover target")
+        md.apply_metadata(db, s, meta)
+        assert s.cover_url == "https://cdn.example.com/c/480.webp"
+        db.rollback()
+    finally:
+        db.close()

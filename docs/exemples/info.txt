@@ -6,6 +6,8 @@
 Titre: Harem Wars - System vs. Queen
 Titre FR: La Guerre du Harem : Le Système contre la Reine
 Titre AR: حرب الحريم: النظام ضد الملكة
+# Affiche : lien vers l'image (téléchargée par le serveur) — ou glissez l'image dans le lot
+Couverture: https://dramaflix.net/dfl-media/img/covers/2210f002fe25882c/480.webp
 
 Genres: Romance, Historique, Vengeance, Palais
 
