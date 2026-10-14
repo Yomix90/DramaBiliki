@@ -215,6 +215,8 @@ async def stream_telegram_episode(
     if not series:
         raise HTTPException(status_code=404, detail="Series not found")
     episode = db.query(Episode).filter(Episode.series_id == series.id, Episode.num == ep_num).first()
+    from bridge.activity import record_stream
+    record_stream(request.client.host if request.client else "?", series.id, ep_num)
     if not episode:
         raise HTTPException(status_code=404, detail="Episode not available")
 

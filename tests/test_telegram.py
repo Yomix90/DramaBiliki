@@ -143,3 +143,112 @@ def test_stream_supports_range_requests(channel, monkeypatch):
         assert client.get(f"/stream/{series.id}/1.mp4", headers={"Range": "bytes=5000-"}).status_code == 416
         assert client.get(f"/stream/{series.id}/9.mp4").status_code == 404
         assert client.get(f"/subtitles/{series.id}/1").text.startswith("WEBVTT")
+
+
+# ---------------------------------------------------------------------------
+# Admin: deleting on Telegram, orphan videos, dashboard
+# ---------------------------------------------------------------------------
+
+def _admin(client):
+    client.cookies.clear()
+    client.post("/admin/login", data={"username": "admin", "password": "test-admin-password"})
+
+
+def test_bulk_delete_and_series_delete_remove_telegram_messages(channel, monkeypatch):
+    db, ch = channel
+    deleted = []
+
+    async def fake_delete(peer_id, access_hash, ids):
+        deleted.extend(ids)
+        return len(ids), ""
+
+    monkeypatch.setattr(telegram_service, "delete_messages", fake_delete)
+    series = Series(source_id=f"tg-del-{ch.id}", slug=f"tg-del-{ch.id}", title="Del", source_type="telegram",
+                    tg_channel_id=ch.id, status="active")
+    db.add(series)
+    db.flush()
+    eps = [Episode(series_id=series.id, num=n, tg_peer_id=ch.peer_id, tg_message_id=100 + n) for n in (1, 2, 3)]
+    db.add_all(eps)
+    db.commit()
+    ids = [e.id for e in eps]
+    series_id = series.id
+
+    with TestClient(app) as client:
+        _admin(client)
+        r = client.post(f"/admin/series/{series.id}/delete-episodes",
+                        data={"episode_id": [str(ids[0]), str(ids[1])], "delete_telegram": "1"})
+        assert "2 épisode(s) supprimé(s)" in r.text and sorted(deleted) == [101, 102]
+
+        # Without the option, Telegram is left untouched
+        deleted.clear()
+        client.post(f"/admin/series/{series.id}/delete", data={})
+        assert deleted == []
+    db.expire_all()
+    assert db.get(Series, series_id) is None
+
+
+def test_orphan_videos_listing_attach_and_delete(channel, monkeypatch):
+    db, ch = channel
+    msgs = [_video(201, "Lost Love EP 2"), _video(202, "Lost Love EP 1"), _video(203, "")]
+    db.add(Series(source_id=f"tg-or-{ch.id}", slug=f"tg-or-{ch.id}", title="Known", status="active"))
+    db.flush()
+    known = db.query(Series).filter_by(source_id=f"tg-or-{ch.id}").one()
+    db.add(Episode(series_id=known.id, num=1, tg_peer_id=ch.peer_id, tg_message_id=203))
+    db.commit()
+
+    class Client(FakeClient):
+        async def iter_messages(self, peer, limit=None, min_id=0, reverse=False):
+            for m in self.messages:
+                yield m
+
+        async def get_messages(self, peer, ids):
+            return [m for m in self.messages if m.id in ids]
+
+    async def fake_client():
+        return Client(msgs)
+
+    async def fake_status():
+        return {"configured": True, "authorized": True, "account": "Me", "pending_phone": "", "needs_password": False, "error": ""}
+
+    monkeypatch.setattr(telegram_service, "authorized_client", fake_client)
+    monkeypatch.setattr(telegram_service, "status", fake_status)
+    deleted = []
+
+    async def fake_delete(peer_id, access_hash, ids):
+        deleted.extend(ids)
+        return len(ids), ""
+
+    monkeypatch.setattr(telegram_service, "delete_messages", fake_delete)
+
+    with TestClient(app) as client:
+        _admin(client)
+        page = client.get("/admin/telegram/orphans").text
+        assert f"{ch.peer_id}:201" in page and f"{ch.peer_id}:202" in page
+        assert f"{ch.peer_id}:203" not in page  # already an episode
+
+        r = client.post("/admin/telegram/orphans/attach", data={
+            "item": [f"{ch.peer_id}:201", f"{ch.peer_id}:202"], "series_id": "new", "new_title": "Lost Love"})
+        assert "2 vidéo(s) ajoutée(s)" in r.text
+        lost = db.query(Series).filter_by(title="Lost Love").one()
+        assert sorted((e.num, e.tg_message_id) for e in lost.episodes) == [(1, 202), (2, 201)]
+
+        client.post("/admin/telegram/orphans/delete", data={"item": [f"{ch.peer_id}:999"]})
+        assert deleted == [999]
+        db.delete(lost)
+        db.delete(known)
+        db.commit()
+
+
+def test_dashboard_shows_live_activity_and_disk():
+    from bridge.activity import record_progress, record_stream, snapshot
+    record_progress(424242, 1, 1)
+    record_stream("10.0.0.9", 1, 1)
+    live = snapshot()
+    assert live["viewers"] >= 1 and live["streams"] >= 1
+    with TestClient(app) as client:
+        _admin(client)
+        page = client.get("/admin?tab=overview").text
+        assert "Spectateurs actifs" in page and "Stockage du serveur" in page
+        assert client.get("/admin/api/status").json()["live"]["viewers"] >= 1
+        r = client.post("/admin/cache/clear", follow_redirects=False)
+        assert r.status_code == 303

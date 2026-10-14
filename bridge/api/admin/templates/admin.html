@@ -56,6 +56,71 @@
                 {% endfor %}
             </div>
 
+
+            <div class="row g-3 mb-3">
+                <div class="col-lg-5">
+                    <div class="card p-3 h-100">
+                        <div class="section-head mb-2">
+                            <h2 class="card-title-sm"><i class="bi bi-broadcast-pin"></i> En direct</h2>
+                            <span class="small text-secondary">actualisé toutes les 15 s</span>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <div class="p-3 rounded" style="background:var(--surface2)">
+                                    <div class="stat-card p-0 border-0 bg-transparent"><div class="label">Spectateurs actifs</div></div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="status-dot {{ '' if live.viewers else 'busy' }}" style="{{ '' if live.viewers else 'animation:none;background:var(--dim);box-shadow:none' }}"></span>
+                                        <span class="fs-2 fw-bold text-white" id="liveViewers">{{ live.viewers }}</span>
+                                    </div>
+                                    <div class="small text-secondary">sur les 2 dernières minutes</div>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <div class="p-3 rounded" style="background:var(--surface2)">
+                                    <div class="stat-card p-0 border-0 bg-transparent"><div class="label">Flux vidéo en cours</div></div>
+                                    <div class="fs-2 fw-bold text-white" id="liveStreams">{{ live.streams }}</div>
+                                    <div class="small text-secondary">appareils en lecture</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="small" id="liveWatching">
+                            {% for w in live.watching %}
+                            <div class="d-flex justify-content-between py-1 {{ 'border-top' if not loop.first }}" style="border-color:var(--border)!important">
+                                <span class="text-truncate">{{ w.title }}</span><span class="text-secondary">{{ w.count }}</span>
+                            </div>
+                            {% else %}
+                            <div class="text-secondary">Personne ne regarde en ce moment.</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-7">
+                    <div class="card p-3 h-100">
+                        <div class="section-head mb-2">
+                            <h2 class="card-title-sm"><i class="bi bi-hdd"></i> Stockage du serveur</h2>
+                            <form method="post" action="/admin/cache/clear" class="m-0" onsubmit="return confirm('Vider le cache des vidéos Telegram ? Elles seront retéléchargées à la demande.')">
+                                <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-trash3"></i> Vider le cache vidéo</button>
+                            </form>
+                        </div>
+                        {% macro fmt(b) %}{% if b >= 1073741824 %}{{ '%.1f'|format(b / 1073741824) }} Go{% else %}{{ '%.0f'|format(b / 1048576) }} Mo{% endif %}{% endmacro %}
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span><strong class="text-white">{{ fmt(disk.used) }}</strong> utilisés sur {{ fmt(disk.total) }}</span>
+                            <span class="{{ 'text-danger' if disk.percent > 90 else 'text-warning' if disk.percent > 75 else 'text-secondary' }}">{{ fmt(disk.free) }} libres</span>
+                        </div>
+                        <div class="progress mb-3" style="height:8px;background:var(--surface2)">
+                            <div class="progress-bar" style="width:{{ disk.percent }}%;background:{{ '#ff2e55' if disk.percent > 90 else '#f0c040' if disk.percent > 75 else 'linear-gradient(90deg,#ff2e55,#ff7a45)' }}"></div>
+                        </div>
+                        <div class="row g-2 small">
+                            {% for label, size in disk.parts.items() %}
+                            <div class="col-sm-6 d-flex justify-content-between"><span class="text-secondary">{{ label }}</span><span>{{ fmt(size) }}</span></div>
+                            {% endfor %}
+                        </div>
+                        <div class="small text-secondary mt-2">
+                            Épisodes : <strong class="text-white">{{ storage.telegram }}</strong> sur Telegram · <strong class="text-white">{{ storage.local }}</strong> sur le disque du serveur
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="row g-3">
                 <div class="col-xl-7">
                     <div class="card p-3 h-100">
@@ -518,6 +583,16 @@
         if (!params.get('tab')) { try { wanted = localStorage.getItem('adminTab') || wanted; } catch (e) {} }
         showSection(wanted, false);
     })();
+
+    // Live counters on the overview
+    setInterval(async () => {
+        if (!document.getElementById('tab-overview').classList.contains('active')) return;
+        try {
+            const data = await (await fetch('/admin/api/status', {credentials: 'same-origin'})).json();
+            document.getElementById('liveViewers').textContent = data.live.viewers;
+            document.getElementById('liveStreams').textContent = data.live.streams;
+        } catch (e) {}
+    }, 15000);
 
     // While a sync runs, poll its status and reload once it finishes.
     {% if sync_running %}

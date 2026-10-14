@@ -150,6 +150,15 @@ async def admin_dashboard(
         except Exception as e:
             tg_status["error"] = str(e)
 
+    from bridge.activity import disk_usage, snapshot
+    live = snapshot()
+    titles = dict(db.query(Series.id, Series.title).filter(Series.id.in_([sid for sid, _ in live["watching"]])).all()) if live["watching"] else {}
+    live["watching"] = [{"title": titles.get(sid, f"#{sid}"), "count": n} for sid, n in live["watching"]]
+    storage = {
+        "telegram": db.query(Episode).filter(Episode.tg_message_id.isnot(None)).count(),
+        "local": db.query(Episode).filter(Episode.local_file.isnot(None), Episode.local_file != "").count(),
+    }
+
     warnings = []
     from bridge.urls import public_base_url_problem
     if public_base_url_problem():
@@ -178,6 +187,9 @@ async def admin_dashboard(
             "warnings": warnings,
             "version": settings.APP_VERSION,
             "settings": settings,
+            "live": live,
+            "disk": disk_usage(),
+            "storage": storage,
             "tg": tg_status,
             "tg_channels": tg_channels,
             "tg_available": tg_available,
@@ -202,7 +214,15 @@ async def admin_status(db: Session = Depends(get_db), admin: str = Depends(requi
             "errors_count": last_run.errors_count,
         },
         "series_count": db.query(Series).count(),
+        "live": __import__("bridge.activity", fromlist=["snapshot"]).snapshot(),
     })
+
+
+@router.post("/cache/clear")
+async def clear_video_cache(admin: str = Depends(require_admin)):
+    from bridge.activity import clear_telegram_cache
+    freed = clear_telegram_cache()
+    return _redirect(f"Cache vidéo Telegram vidé : {round(freed / 1024 ** 2, 1)} Mo libérés", tab="overview")
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,88 @@
+{% extends "_base.html" %}
+{% set active = 'orphans' %}
+{% block title %}Vidéos sans série — DramaBiliki Admin{% endblock %}
+{% block page_title %}Vidéos Telegram sans série{% endblock %}
+{% block page_sub %}Vidéos de vos chaînes liées qui ne sont rattachées à aucun épisode{% endblock %}
+{% block content %}
+{% if not tg.authorized %}
+<div class="alert alert-warning small">Compte Telegram non connecté : connectez-le dans <a href="/admin?tab=telegram">Telegram</a>.</div>
+{% elif not channels %}
+<div class="alert alert-info small">Aucune chaîne liée. Ajoutez vos chaînes dans <a href="/admin?tab=telegram">Telegram</a>.</div>
+{% endif %}
+{% for p in problems %}<div class="alert alert-danger small py-2">{{ p }}</div>{% endfor %}
+
+<form id="orphanForm" method="post" class="card p-3">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+        <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="checkAll" onchange="document.querySelectorAll('.orphan-check').forEach(c => c.checked = this.checked); updateCount()">
+            <label class="form-check-label small" for="checkAll">Tout sélectionner</label>
+        </div>
+        <span class="small text-secondary" id="selCount">0 sélectionné(s)</span>
+        <span class="small text-secondary">· {{ rows|length }} vidéo(s) sans série (analyse des {{ limit }} derniers messages par chaîne)</span>
+        <a href="?limit={{ limit * 5 }}" class="small ms-2">Analyser plus</a>
+    </div>
+
+    {% if rows %}
+    <div class="row g-2 align-items-end mb-3 p-2 rounded mx-0" style="background:var(--surface2)">
+        <div class="col-md-4">
+            <label class="form-label small text-secondary">Ajouter la sélection à</label>
+            <select name="series_id" class="form-select form-select-sm" id="seriesSel" onchange="document.getElementById('newTitleWrap').style.display = this.value === 'new' ? '' : 'none'">
+                <option value="">— Choisir une série —</option>
+                <option value="new">➕ Nouvelle série…</option>
+                {% for s in all_series %}<option value="{{ s.id }}">{{ s.title }} (#{{ s.id }})</option>{% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4" id="newTitleWrap" style="display:none">
+            <label class="form-label small text-secondary">Titre de la nouvelle série</label>
+            <input name="new_title" class="form-control form-control-sm" id="newTitle">
+        </div>
+        <div class="col-md-auto d-flex gap-2">
+            <button class="btn btn-sm btn-brand" formaction="/admin/telegram/orphans/attach" onclick="return checkSel()"><i class="bi bi-collection-play"></i> Ajouter à la série</button>
+            <button class="btn btn-sm btn-outline-danger" formaction="/admin/telegram/orphans/delete"
+                    onclick="return checkSel() && confirm('Supprimer définitivement de Telegram les ' + selected() + ' vidéo(s) sélectionnée(s) ?')"><i class="bi bi-trash"></i> Supprimer de Telegram</button>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle small">
+            <thead><tr><th style="width:32px"></th><th>Fichier</th><th>Série / épisode détectés</th><th>Chaîne</th><th>Taille</th><th>Durée</th><th>Publiée</th></tr></thead>
+            <tbody>
+            {% for r in rows %}
+                <tr>
+                    <td><input class="form-check-input orphan-check" type="checkbox" name="item" value="{{ r.key }}" data-title="{{ r.title }}" onchange="updateCount()"></td>
+                    <td>
+                        <div class="text-white text-truncate" style="max-width:320px" title="{{ r.name }}">{{ r.name }}</div>
+                        {% if r.caption %}<div class="text-secondary text-truncate" style="max-width:320px">{{ r.caption }}</div>{% endif %}
+                    </td>
+                    <td>{% if r.title %}{{ r.title }}{% else %}<span class="text-secondary">—</span>{% endif %}{% if r.episode %} <span class="badge text-bg-secondary">ÉP {{ r.episode }}</span>{% endif %}</td>
+                    <td class="text-secondary">{{ r.channel }}</td>
+                    <td>{{ r.size_mb }} Mo</td>
+                    <td>{% if r.duration %}{{ r.duration // 60 }}:{{ '%02d'|format(r.duration % 60) }}{% else %}—{% endif %}</td>
+                    <td class="text-secondary text-nowrap">{{ r.date }}</td>
+                </tr>
+            {% else %}
+                <tr><td colspan="7"><div class="empty-state"><i class="bi bi-check2-circle"></i>Toutes les vidéos de vos chaînes appartiennent à une série.</div></td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const selected = () => document.querySelectorAll('.orphan-check:checked').length;
+function updateCount() {
+    document.getElementById('selCount').textContent = selected() + ' sélectionné(s)';
+    // Suggest the detected title for a new series
+    const first = document.querySelector('.orphan-check:checked');
+    const nt = document.getElementById('newTitle');
+    if (first && nt && !nt.value) nt.value = first.dataset.title || '';
+}
+function checkSel() {
+    if (!selected()) { alert('Sélectionnez au moins une vidéo.'); return false; }
+    return true;
+}
+</script>
+{% endblock %}

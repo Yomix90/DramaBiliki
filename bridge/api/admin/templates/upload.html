@@ -104,8 +104,8 @@
 {% block scripts %}
 <script>
 const CHUNK = 8 * 1024 * 1024;      // 8 MB per request
-const PARALLEL_FILES = 2;           // files sent at the same time
-const PARALLEL_CHUNKS = 4;          // requests per file
+const PARALLEL_FILES = 4;           // files sent to the VPS at the same time (Telegram sends are one by one)
+const PARALLEL_CHUNKS = 3;          // requests per file
 const items = [];
 const $ = (id) => document.getElementById(id);
 const fmt = (b) => b > 1073741824 ? (b / 1073741824).toFixed(2) + ' Go' : (b / 1048576).toFixed(1) + ' Mo';

@@ -254,6 +254,29 @@ class TelegramService:
         self._messages[key] = (time.time(), message)
         return message
 
+    async def delete_messages(self, peer_id: int, access_hash: Optional[int], message_ids: List[int]) -> Tuple[int, str]:
+        """Deletes messages from a channel (the account must be admin). Returns (count, error)."""
+        client = await self.authorized_client()
+        if client is None:
+            return 0, "Compte Telegram non connecté"
+        deleted, error = 0, ""
+        peer = self.input_peer(peer_id, access_hash)
+        for i in range(0, len(message_ids), 100):
+            batch = [int(m) for m in message_ids[i:i + 100]]
+            try:
+                result = await client.delete_messages(peer, batch, revoke=True)
+                deleted += sum(getattr(r, "pts_count", 0) or 0 for r in result) or len(batch)
+            except errors.ChatAdminRequiredError:
+                return deleted, "Le compte n'est pas administrateur de la chaîne : suppression impossible sur Telegram"
+            except errors.MessageDeleteForbiddenError:
+                return deleted, "Telegram refuse la suppression de ces messages"
+            except Exception as e:  # network, flood wait...
+                error = f"{type(e).__name__}: {e}"
+                break
+            for mid in batch:
+                self._messages.pop((peer_id, mid), None)
+        return deleted, error
+
     async def iter_bytes(self, message, start: int, end: int) -> AsyncIterator[bytes]:
         """Yields bytes [start, end] (inclusive) of the message's file."""
         client = await self.authorized_client()

@@ -188,19 +188,38 @@ async def series_page(series_id: int, request: Request, check: int = 0, db: Sess
                  genres_text=", ".join(g.name for g in series.genres), checked=bool(check), problems=problems)
 
 
+async def _remove_episodes(db: Session, episodes, delete_telegram: bool):
+    """Deletes episodes (local files, and their Telegram messages when asked). Returns (count, telegram_note)."""
+    by_peer = {}
+    for episode in episodes:
+        uploads.remove_local_video(episode)
+        if delete_telegram and episode.tg_peer_id and episode.tg_message_id:
+            by_peer.setdefault(episode.tg_peer_id, []).append(episode.tg_message_id)
+        db.delete(episode)
+    note, total = "", 0
+    for peer_id, message_ids in by_peer.items():
+        channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == peer_id).first()
+        deleted, error = await telegram_service.delete_messages(peer_id, channel.access_hash if channel else None, message_ids)
+        total += deleted
+        if error:
+            note = error
+    if by_peer:
+        note = note or f"{total} vidéo(s) supprimée(s) de Telegram"
+    return len(episodes), note
+
+
 @router.post("/series/{series_id}/delete-episodes")
 async def delete_episodes(series_id: int, request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     form = await request.form()
     ids = [int(v) for v in form.getlist("episode_id") if str(v).isdigit()]
-    removed = 0
-    for episode in db.query(Episode).filter(Episode.series_id == series_id, Episode.id.in_(ids)).all():
-        uploads.remove_local_video(episode)
-        db.delete(episode)
-        removed += 1
+    episodes = db.query(Episode).filter(Episode.series_id == series_id, Episode.id.in_(ids)).all()
+    if not episodes:
+        return _back(f"/admin/series/{series_id}", "Aucun épisode sélectionné", "warning")
+    removed, note = await _remove_episodes(db, episodes, form.get("delete_telegram") == "1")
     db.flush()
     uploads.refresh_series_counts(db, series_id)
     db.commit()
-    return _back(f"/admin/series/{series_id}", f"{removed} épisode(s) supprimé(s)")
+    return _back(f"/admin/series/{series_id}", f"{removed} épisode(s) supprimé(s)" + (f" — {note}" if note else ""))
 
 
 @router.post("/series/{series_id}/save")
@@ -221,28 +240,38 @@ async def save_series(
 
 
 @router.post("/series/{series_id}/delete")
-async def delete_series(series_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+async def delete_series(
+    series_id: int,
+    delete_telegram: str = Form(""),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
     series = db.get(Series, series_id)
-    if series:
-        for episode in series.episodes:
-            uploads.remove_local_video(episode)
-        db.delete(series)
-        db.commit()
-    return _back("/admin?tab=series", "Série supprimée")
+    if series is None:
+        return _back("/admin?tab=series", "Série introuvable", "danger")
+    title = series.title
+    _, note = await _remove_episodes(db, list(series.episodes), delete_telegram == "1")
+    db.delete(series)
+    db.commit()
+    return _back("/admin?tab=series", f"Série « {title} » supprimée" + (f" — {note}" if note else ""))
 
 
 @router.post("/episodes/{episode_id}/delete")
-async def delete_episode(episode_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+async def delete_episode(
+    episode_id: int,
+    delete_telegram: str = Form(""),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
     episode = db.get(Episode, episode_id)
     if episode is None:
         return _back("/admin?tab=series", "Épisode introuvable", "danger")
     series_id = episode.series_id
-    uploads.remove_local_video(episode)
-    db.delete(episode)
+    _, note = await _remove_episodes(db, [episode], delete_telegram == "1")
     db.flush()
     uploads.refresh_series_counts(db, series_id)
     db.commit()
-    return _back(f"/admin/series/{series_id}", "Épisode supprimé")
+    return _back(f"/admin/series/{series_id}", "Épisode supprimé" + (f" — {note}" if note else ""))
 
 
 @router.post("/episodes/{episode_id}/number")
@@ -754,3 +783,129 @@ async def series_metadata(
             series.local_cover = name
     db.commit()
     return _back(f"/admin/series/{series_id}", "Informations importées depuis le fichier : " + ", ".join(sorted(meta)))
+
+
+# ---------------------------------------------------------------------------
+# Telegram videos that belong to no series
+# ---------------------------------------------------------------------------
+
+def _parse_items(values) -> dict:
+    """'peer:message' form values -> {peer_id: [message ids]}."""
+    out = {}
+    for value in values:
+        try:
+            peer, mid = str(value).split(":")
+            out.setdefault(int(peer), []).append(int(mid))
+        except ValueError:
+            continue
+    return out
+
+
+@router.get("/telegram/orphans", response_class=HTMLResponse)
+async def tg_orphans(request: Request, limit: int = 2000, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    from bridge.telegram.sync import _is_video, detect_series_and_episode
+    tg = await telegram_service.status()
+    channels = db.query(TelegramChannel).order_by(TelegramChannel.title).all()
+    known = {
+        (p, m) for p, m in db.query(Episode.tg_peer_id, Episode.tg_message_id).filter(Episode.tg_message_id.isnot(None))
+    }
+    rows, problems = [], []
+    client = await telegram_service.authorized_client() if tg["authorized"] else None
+    if client is not None:
+        for channel in channels:
+            peer = telegram_service.input_peer(channel.peer_id, channel.access_hash)
+            try:
+                async for message in client.iter_messages(peer, limit=max(50, min(limit, 20000))):
+                    if not _is_video(message) or (channel.peer_id, message.id) in known:
+                        continue
+                    name = getattr(message.file, "name", None) or ""
+                    title, ep = detect_series_and_episode(message.message or "", name)
+                    rows.append({
+                        "key": f"{channel.peer_id}:{message.id}",
+                        "channel": channel.title,
+                        "message_id": message.id,
+                        "name": name or f"message #{message.id}",
+                        "caption": (message.message or "").strip().splitlines()[0][:120] if message.message else "",
+                        "size_mb": round((message.file.size or 0) / 1024 ** 2, 1),
+                        "duration": int(getattr(message.file, "duration", None) or 0),
+                        "date": message.date.strftime("%d/%m/%Y %H:%M") if getattr(message, "date", None) else "",
+                        "title": title or "",
+                        "episode": ep,
+                    })
+            except Exception as e:
+                problems.append(f"{channel.title} : {type(e).__name__} {e}")
+    all_series = db.query(Series.id, Series.title).order_by(Series.title).limit(3000).all()
+    return _page(request, "tg_orphans.html", admin=admin, tg=tg, channels=channels, rows=rows,
+                 problems=problems, all_series=all_series, limit=limit)
+
+
+@router.post("/telegram/orphans/delete")
+async def tg_orphans_delete(request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    form = await request.form()
+    groups = _parse_items(form.getlist("item"))
+    if not groups:
+        return _back("/admin/telegram/orphans", "Aucune vidéo sélectionnée", "warning")
+    total, errors = 0, []
+    for peer_id, ids in groups.items():
+        channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == peer_id).first()
+        deleted, error = await telegram_service.delete_messages(peer_id, channel.access_hash if channel else None, ids)
+        total += deleted
+        if error:
+            errors.append(error)
+    if errors:
+        return _back("/admin/telegram/orphans", f"{total} vidéo(s) supprimée(s). {errors[0]}", "warning")
+    return _back("/admin/telegram/orphans", f"{total} vidéo(s) supprimée(s) de Telegram")
+
+
+@router.post("/telegram/orphans/attach")
+async def tg_orphans_attach(request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Turns the selected Telegram videos into episodes of an existing or new series."""
+    from bridge.telegram.sync import _mime_type, detect_series_and_episode
+    form = await request.form()
+    groups = _parse_items(form.getlist("item"))
+    if not groups:
+        return _back("/admin/telegram/orphans", "Aucune vidéo sélectionnée", "warning")
+    target = str(form.get("series_id") or "")
+    if target == "new":
+        title = str(form.get("new_title") or "").strip()
+        if not title:
+            return _back("/admin/telegram/orphans", "Donnez un titre à la nouvelle série", "danger")
+        series = uploads.create_series(db, title)
+        db.commit()
+    elif target.isdigit():
+        series = db.get(Series, int(target))
+    else:
+        series = None
+    if series is None:
+        return _back("/admin/telegram/orphans", "Choisissez une série", "danger")
+
+    client = await telegram_service.authorized_client()
+    if client is None:
+        return _back("/admin/telegram/orphans", "Compte Telegram non connecté", "danger")
+    found = []
+    for peer_id, ids in groups.items():
+        channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == peer_id).first()
+        messages = await client.get_messages(telegram_service.input_peer(peer_id, channel.access_hash if channel else None), ids=ids)
+        for message in messages:
+            if message is not None and message.file is not None:
+                _, ep = detect_series_and_episode(message.message or "", getattr(message.file, "name", None) or "")
+                found.append((ep, message.id, peer_id, message))
+    found.sort(key=lambda x: (x[0] is None, x[0] or 0, x[1]))  # detected episode numbers first, then posting order
+
+    used = {n for (n,) in db.query(Episode.num).filter(Episode.series_id == series.id)}
+    added = 0
+    for ep, _, peer_id, message in found:
+        num = ep if ep and ep not in used else ((max(used) + 1) if used else 1)
+        used.add(num)
+        db.add(Episode(
+            series_id=series.id, num=num, title=f"Episode {num}",
+            titles_json={"en": f"Episode {num}", "fr": f"Épisode {num}", "ar": f"الحلقة {num}"},
+            duration=int(getattr(message.file, "duration", None) or 0) or 120, is_free=True,
+            tg_peer_id=peer_id, tg_message_id=message.id,
+            file_size=message.file.size or 0, mime_type=_mime_type(message),
+        ))
+        added += 1
+    db.flush()
+    uploads.refresh_series_counts(db, series.id)
+    db.commit()
+    return _back(f"/admin/series/{series.id}", f"{added} vidéo(s) ajoutée(s) à « {series.title} »")

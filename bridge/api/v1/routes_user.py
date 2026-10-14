@@ -92,6 +92,8 @@ async def update_progress(
     current_user: User = Depends(get_current_user),
 ):
     """Updates watch progress (in seconds) for a specific episode."""
+    from bridge.activity import record_progress
+    record_progress(current_user.id, payload.series_id, payload.episode_num)
     record = db.query(WatchHistory).filter(
         WatchHistory.user_id == current_user.id,
         WatchHistory.series_id == payload.series_id,

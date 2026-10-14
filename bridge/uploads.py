@@ -35,7 +35,7 @@ logger = logging.getLogger("bridge.uploads")
 
 UPLOAD_TMP_DIR = settings.MEDIA_DIR / "uploads_tmp"
 LOCAL_VIDEOS_DIR = settings.MEDIA_DIR / "videos" / "local"
-PROCESSING_WORKERS = 2
+PROCESSING_WORKERS = 3  # analysis / remux run in parallel; Telegram sends are serialized below
 JOB_RETENTION_SECONDS = 6 * 3600
 UPLOAD_GENRE_SLUG = "uploads"
 
@@ -80,6 +80,10 @@ class UploadJob:
 
 
 _jobs: Dict[str, UploadJob] = {}
+
+# Videos are kept on the VPS disk until their turn: one Telegram upload at a time.
+_telegram_lock: Optional[asyncio.Lock] = None
+_telegram_waiting = 0
 
 # Information files sent with a batch: id -> {"meta": dict, "cover": bytes | None, "applied": set of series ids}
 _metadata: Dict[str, dict] = {}
@@ -366,8 +370,19 @@ async def _process(job: UploadJob) -> None:
     # 3. Storage
     destination = app_settings.get("upload_destination")
     if destination == "telegram":
-        job.touch(status="sending", progress=0.0, message="Envoi vers Telegram")
-        peer_id, message_id = await _send_to_telegram(job, work, series_id, ep_num, info)
+        global _telegram_lock, _telegram_waiting
+        if _telegram_lock is None:
+            _telegram_lock = asyncio.Lock()
+        _telegram_waiting += 1
+        job.touch(status="processing", progress=1.0, message=f"Prêt sur le serveur — en attente d'envoi vers Telegram ({_telegram_waiting} en file)")
+        try:
+            async with _telegram_lock:
+                _telegram_waiting -= 1
+                job.touch(status="sending", progress=0.0, message="Envoi vers Telegram")
+                peer_id, message_id = await _send_to_telegram(job, work, series_id, ep_num, info)
+        finally:
+            if job.status != "sending":
+                _telegram_waiting = max(0, _telegram_waiting - 1)
         episode_fields.update(tg_peer_id=peer_id, tg_message_id=message_id, local_file="")
     else:
         job.touch(status="sending", progress=0.5, message="Enregistrement sur le serveur")

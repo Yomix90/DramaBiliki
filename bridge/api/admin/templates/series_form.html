@@ -70,7 +70,12 @@
             <button class="btn btn-brand w-100"><i class="bi bi-save"></i> {{ 'Enregistrer' if series else 'Créer la série' }}</button>
         </form>
         {% if series %}
-        <form method="post" action="/admin/series/{{ series.id }}/delete" class="mt-2 text-end" onsubmit="return confirm('Supprimer définitivement cette série et ses épisodes ?')">
+        <form method="post" action="/admin/series/{{ series.id }}/delete" class="mt-2 d-flex flex-wrap align-items-center justify-content-end gap-2"
+              onsubmit="return confirm('Supprimer définitivement cette série et ses ' + {{ episodes|length }} + ' épisode(s)' + (this.delete_telegram.checked ? ', y compris les vidéos sur Telegram' : '') + ' ?')">
+            <div class="form-check small mb-0">
+                <input class="form-check-input" type="checkbox" name="delete_telegram" value="1" id="delSeriesTg" checked>
+                <label class="form-check-label text-secondary" for="delSeriesTg">Supprimer aussi les vidéos sur Telegram</label>
+            </div>
             <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Supprimer la série</button>
         </form>
         {% endif %}
@@ -90,18 +95,36 @@
                     <i class="bi bi-exclamation-octagon"></i>
                     <div class="flex-grow-1"><strong>{{ problems|length }} épisode(s) illisible(s)</strong> : {{ problems.values()|first }}</div>
                     {% for id in problems %}<input type="hidden" name="episode_id" value="{{ id }}">{% endfor %}
+                    <input type="hidden" name="delete_telegram" value="1">
                     <button class="btn btn-sm btn-danger">Supprimer les épisodes illisibles</button>
                 </form>
                 {% else %}
                 <div class="alert alert-success small py-2"><i class="bi bi-check-circle"></i> Tous les épisodes sont lisibles.</div>
                 {% endif %}
             {% endif %}
+            {% if episodes %}
+            <form id="bulkDelete" method="post" action="/admin/series/{{ series.id }}/delete-episodes"
+                  class="d-flex flex-wrap align-items-center gap-2 mb-2 p-2 rounded" style="background:var(--surface2)"
+                  onsubmit="const n = document.querySelectorAll('.ep-check:checked').length; if (!n) { alert('Sélectionnez au moins un épisode.'); return false; } return confirm('Supprimer ' + n + ' épisode(s)' + (this.delete_telegram.checked ? ' et leurs vidéos sur Telegram' : '') + ' ?')">
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" id="checkAll" onchange="document.querySelectorAll('.ep-check').forEach(c => c.checked = this.checked); updateCount()">
+                    <label class="form-check-label small" for="checkAll">Tout sélectionner</label>
+                </div>
+                <span class="small text-secondary" id="selCount">0 sélectionné(s)</span>
+                <div class="form-check small mb-0 ms-auto">
+                    <input class="form-check-input" type="checkbox" name="delete_telegram" value="1" id="bulkTg" checked>
+                    <label class="form-check-label text-secondary" for="bulkTg">aussi sur Telegram</label>
+                </div>
+                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Supprimer la sélection</button>
+            </form>
+            {% endif %}
             <div class="table-responsive">
                 <table class="table table-hover align-middle">
-                    <thead><tr><th>N°</th><th>Source</th><th>Durée</th><th>Taille</th><th></th><th class="text-end">Actions</th></tr></thead>
+                    <thead><tr><th style="width:32px"></th><th>N°</th><th>Source</th><th>Durée</th><th>Taille</th><th></th><th class="text-end">Actions</th></tr></thead>
                     <tbody>
                     {% for e in episodes %}
                         <tr class="{{ 'table-danger' if problems is defined and e.id in problems }}" {% if problems is defined and e.id in problems %}title="{{ problems[e.id] }}"{% endif %}>
+                            <td><input class="form-check-input ep-check" type="checkbox" name="episode_id" value="{{ e.id }}" form="bulkDelete" onchange="updateCount()"></td>
                             <td>
                                 <form method="post" action="/admin/episodes/{{ e.id }}/number" class="d-flex gap-1">
                                     <input type="number" name="num" value="{{ e.num }}" min="1" class="form-control form-control-sm" style="width:72px" onchange="this.form.submit()">
@@ -117,13 +140,14 @@
                             <td class="small text-secondary">{{ (e.file_size / 1048576)|round(1) if e.file_size else '—' }} Mo</td>
                             <td><a class="btn btn-sm btn-outline-secondary" href="/stream/{{ series.id }}/{{ e.num }}.mp4" target="_blank" title="Lire"><i class="bi bi-play-fill"></i></a></td>
                             <td class="text-end">
-                                <form method="post" action="/admin/episodes/{{ e.id }}/delete" class="d-inline" onsubmit="return confirm('Supprimer l\'épisode {{ e.num }} ?')">
+                                <form method="post" action="/admin/episodes/{{ e.id }}/delete" class="d-inline" onsubmit="return confirm('Supprimer l\'épisode {{ e.num }}{{ ' et sa vidéo sur Telegram' if e.tg_message_id }} ?')">
+                                    <input type="hidden" name="delete_telegram" value="1">
                                     <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                                 </form>
                             </td>
                         </tr>
                     {% else %}
-                        <tr><td colspan="6" class="text-center text-secondary py-4">Aucun épisode. Cliquez « Ajouter des épisodes ».</td></tr>
+                        <tr><td colspan="7" class="text-center text-secondary py-4">Aucun épisode. Cliquez « Ajouter des épisodes ».</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
@@ -137,6 +161,10 @@
 
 {% block scripts %}
 <script>
+function updateCount() {
+    const el = document.getElementById('selCount');
+    if (el) el.textContent = document.querySelectorAll('.ep-check:checked').length + ' sélectionné(s)';
+}
 // Pre-fills the form from an info file; nothing is saved until "Enregistrer".
 document.getElementById('infoFile').addEventListener('change', async (ev) => {
     const file = ev.target.files[0];
