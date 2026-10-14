@@ -33,6 +33,18 @@ android {
         versionName = flutter.versionName
     }
 
+    // "direct": APK published by the bridge, updates itself (ota_update).
+    // "amazon": Amazon Appstore build, updates only through the store.
+    flavorDimensions += "store"
+    productFlavors {
+        create("direct") { dimension = "store" }
+        create("amazon") {
+            dimension = "store"
+            // Fire tablets are ARM only
+            ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
+        }
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

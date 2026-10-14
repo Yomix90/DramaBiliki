@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show appFlavor;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ota_update/ota_update.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -14,6 +15,8 @@ import 'server_url.dart';
 /// app and opens the Android installer (the user only confirms "Install").
 /// A forced update cannot be dismissed.
 Future<void> checkForAppUpdate(BuildContext context, WidgetRef ref) async {
+  // Store builds are updated by the store itself (Amazon forbids self-updates).
+  if (appFlavor == 'amazon') return;
   try {
     final info = await ref.read(repositoryProvider).checkVersion(AppConstants.appVersion);
     if (!info.hasUpdate || info.downloadUrl.isEmpty || !context.mounted) return;
