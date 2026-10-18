@@ -164,10 +164,9 @@ async def _cache_video(message, path) -> None:
     part = path.with_suffix(".part")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        client = await telegram_service.authorized_client()
-        if client is not None:
-            await client.download_media(message, file=str(part))
-            part.replace(path)
+        # The message keeps the client of the account that fetched it
+        await message.download_media(file=str(part))
+        part.replace(path)
     except Exception as e:
         logger.warning(f"Could not cache Telegram video {path.name}: {e}")
         part.unlink(missing_ok=True)

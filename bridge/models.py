@@ -210,13 +210,25 @@ class AppConfig(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 
+class TelegramAccount(Base):
+    """A Telegram user account linked from the admin (several can be connected)."""
+    __tablename__ = "telegram_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session = Column(Text, default="")  # Telethon StringSession (secret)
+    name = Column(String(255), default="")
+    phone = Column(String(32), default="")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class TelegramChannel(Base):
     """A Telegram channel whose videos are imported as series/episodes."""
     __tablename__ = "telegram_channels"
 
     id = Column(Integer, primary_key=True, index=True)
     peer_id = Column(BigInteger, unique=True, index=True, nullable=False)  # e.g. -1001234567890
-    access_hash = Column(BigInteger, nullable=True)
+    access_hash = Column(BigInteger, nullable=True)  # only valid for the account below
+    account_id = Column(Integer, nullable=True)  # TelegramAccount used to read this channel
     title = Column(String(255), default="")
     username = Column(String(64), default="")
     # caption: series & episode parsed from each caption | single: the whole channel is one series

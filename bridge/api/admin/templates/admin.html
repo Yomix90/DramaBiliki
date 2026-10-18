@@ -197,7 +197,7 @@
             <div class="row g-3">
                 <div class="col-lg-5">
                     <div class="card p-3 h-100">
-                        <h6 class="fw-bold mb-3"><i class="bi bi-person-badge text-info"></i> Compte Telegram</h6>
+                        <h6 class="fw-bold mb-3"><i class="bi bi-person-badge text-info"></i> Comptes Telegram</h6>
 
                         {% if tg.error %}
                         <div class="alert alert-warning small py-2">{{ tg.error }}</div>
@@ -207,39 +207,71 @@
                             <p class="small text-secondary">
                                 1. Allez sur <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a>,
                                 connectez-vous avec votre numéro → <strong>API development tools</strong> → créez une application.<br>
-                                2. Copiez l'<strong>App api_id</strong> et l'<strong>App api_hash</strong> ici.
+                                2. Copiez l'<strong>App api_id</strong> et l'<strong>App api_hash</strong> ici (ils servent pour tous vos comptes).
                             </p>
                             <form method="post" action="/admin/telegram/credentials">
                                 <div class="mb-2"><input name="api_id" class="form-control form-control-sm" placeholder="api_id (ex. 1234567)" required></div>
                                 <div class="mb-3"><input name="api_hash" class="form-control form-control-sm font-monospace" placeholder="api_hash" required></div>
                                 <button class="btn btn-sm btn-brand w-100">Enregistrer</button>
                             </form>
+                        {% else %}
+                            {% for a in tg.accounts %}
+                            <div class="d-flex align-items-center gap-2 py-2 {{ 'border-top' if not loop.first }}" style="border-color:var(--border)!important">
+                                <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0" style="width:38px;height:38px;background:#229ED922;color:#229ED9"><i class="bi bi-telegram fs-5"></i></div>
+                                <div class="flex-grow-1 small" style="min-width:0">
+                                    <div class="fw-semibold text-white text-truncate">{{ a.name or a.phone or ('Compte #' ~ a.id) }}</div>
+                                    <div>
+                                        {% if a.authorized %}<span class="text-success"><i class="bi bi-check-circle"></i> Connecté</span>
+                                        {% else %}<span class="text-danger"><i class="bi bi-x-circle"></i> Session expirée</span>{% endif %}
+                                        <span class="text-secondary">· {{ a.channels }} chaîne(s)</span>
+                                    </div>
+                                </div>
+                                <form method="post" action="/admin/telegram/accounts/{{ a.id }}/logout" onsubmit="return confirm('Déconnecter ce compte Telegram ? Ses chaînes passeront à un autre compte membre si possible.')">
+                                    <button class="btn btn-sm btn-outline-danger" title="Déconnecter"><i class="bi bi-box-arrow-right"></i></button>
+                                </form>
+                            </div>
+                            {% endfor %}
 
-                        {% elif not tg.authorized %}
+                            {% if tg.accounts %}
+                            <form method="post" action="/admin/telegram/sync" class="my-2">
+                                <button class="btn btn-sm btn-brand w-100" {{ 'disabled' if sync_running or not tg.authorized }}><i class="bi bi-arrow-repeat"></i> Synchroniser toutes les chaînes</button>
+                            </form>
+                            <p class="small text-secondary mb-2">Import automatique toutes les {{ settings.TG_SYNC_INTERVAL_MINUTES }} min.</p>
+                            {% endif %}
+
+                            <div class="p-2 rounded mt-2" style="background:var(--surface2)">
                             {% if tg.needs_password %}
-                                <p class="small text-secondary">Validation en deux étapes activée : entrez votre mot de passe Telegram.</p>
+                                <div class="small fw-semibold text-white mb-1"><i class="bi bi-person-plus"></i> Nouveau compte</div>
+                                <p class="small text-secondary mb-2">Validation en deux étapes activée : entrez le mot de passe Telegram.</p>
                                 <form method="post" action="/admin/telegram/sign-in">
-                                    <div class="mb-3"><input type="password" name="password" class="form-control form-control-sm" placeholder="Mot de passe 2FA" required autofocus></div>
+                                    <div class="mb-2"><input type="password" name="password" class="form-control form-control-sm" placeholder="Mot de passe 2FA" required autofocus></div>
                                     <button class="btn btn-sm btn-brand w-100">Se connecter</button>
                                 </form>
+                                <form method="post" action="/admin/telegram/cancel-login" class="mt-1"><button class="btn btn-sm btn-link text-secondary p-0">Annuler</button></form>
                             {% elif tg.pending_phone %}
-                                <p class="small text-secondary">Entrez le code reçu par <strong>{{ tg.pending_phone }}</strong> (dans l'app Telegram ou par SMS).</p>
+                                <div class="small fw-semibold text-white mb-1"><i class="bi bi-person-plus"></i> Nouveau compte</div>
+                                <p class="small text-secondary mb-2">Entrez le code reçu par <strong>{{ tg.pending_phone }}</strong> (dans l'app Telegram ou par SMS).</p>
                                 <form method="post" action="/admin/telegram/sign-in">
                                     <div class="mb-2"><input name="code" class="form-control form-control-sm" placeholder="Code (ex. 12345)" inputmode="numeric" required autofocus></div>
-                                    <div class="mb-3"><input type="password" name="password" class="form-control form-control-sm" placeholder="Mot de passe 2FA (si activé)"></div>
+                                    <div class="mb-2"><input type="password" name="password" class="form-control form-control-sm" placeholder="Mot de passe 2FA (si activé)"></div>
                                     <button class="btn btn-sm btn-brand w-100">Valider</button>
                                 </form>
-                                <form method="post" action="/admin/telegram/send-code" class="mt-2">
-                                    <input type="hidden" name="phone" value="{{ tg.pending_phone }}">
-                                    <button class="btn btn-sm btn-link text-secondary p-0">Renvoyer un code</button>
-                                </form>
+                                <div class="d-flex justify-content-between mt-1">
+                                    <form method="post" action="/admin/telegram/send-code">
+                                        <input type="hidden" name="phone" value="{{ tg.pending_phone }}">
+                                        <button class="btn btn-sm btn-link text-secondary p-0">Renvoyer un code</button>
+                                    </form>
+                                    <form method="post" action="/admin/telegram/cancel-login"><button class="btn btn-sm btn-link text-secondary p-0">Annuler</button></form>
+                                </div>
                             {% else %}
-                                <p class="small text-secondary">Connectez le compte qui est membre (ou admin) de votre chaîne.</p>
-                                <form method="post" action="/admin/telegram/send-code">
-                                    <div class="mb-3"><input name="phone" class="form-control form-control-sm" placeholder="+33612345678" required></div>
-                                    <button class="btn btn-sm btn-brand w-100">Recevoir le code</button>
+                                <div class="small fw-semibold text-white mb-1"><i class="bi bi-person-plus"></i> {{ 'Ajouter un autre compte' if tg.accounts else 'Connecter un compte' }}</div>
+                                <form method="post" action="/admin/telegram/send-code" class="d-flex gap-2">
+                                    <input name="phone" class="form-control form-control-sm" placeholder="+33612345678" required>
+                                    <button class="btn btn-sm btn-brand text-nowrap">Recevoir le code</button>
                                 </form>
                             {% endif %}
+                            </div>
+
                             <details class="mt-3 small">
                                 <summary class="text-secondary">Changer l'API ID / hash</summary>
                                 <form method="post" action="/admin/telegram/credentials" class="mt-2">
@@ -248,31 +280,15 @@
                                     <button class="btn btn-sm btn-outline-light">Enregistrer</button>
                                 </form>
                             </details>
-
-                        {% else %}
-                            <div class="d-flex align-items-center gap-3 mb-3">
-                                <div class="rounded-circle d-flex align-items-center justify-content-center" style="width:44px;height:44px;background:#229ED922;color:#229ED9"><i class="bi bi-telegram fs-4"></i></div>
-                                <div>
-                                    <div class="fw-semibold text-white">{{ tg.account }}</div>
-                                    <div class="small text-success"><i class="bi bi-check-circle"></i> Connecté</div>
-                                </div>
-                            </div>
-                            <p class="small text-secondary">Les nouvelles vidéos des chaînes sont importées automatiquement toutes les {{ settings.TG_SYNC_INTERVAL_MINUTES }} min.</p>
-                            <div class="d-flex gap-2">
-                                <form method="post" action="/admin/telegram/sync" class="flex-grow-1">
-                                    <button class="btn btn-sm btn-brand w-100" {{ 'disabled' if sync_running }}><i class="bi bi-arrow-repeat"></i> Synchroniser maintenant</button>
-                                </form>
-                                <form method="post" action="/admin/telegram/logout" onsubmit="return confirm('Déconnecter le compte Telegram ?')">
-                                    <button class="btn btn-sm btn-outline-danger" title="Déconnecter"><i class="bi bi-box-arrow-right"></i></button>
-                                </form>
-                            </div>
                         {% endif %}
                     </div>
                 </div>
 
+                {% set live_accounts = tg.accounts | selectattr('authorized') | list %}
+                {% set account_ids = tg.accounts | map(attribute='id') | list %}
                 <div class="col-lg-7">
-                    <div class="card p-3 h-100">
-                        <h6 class="fw-bold mb-2"><i class="bi bi-broadcast"></i> Ajouter une chaîne</h6>
+                    <div class="card p-3 mb-3">
+                        <h6 class="fw-bold mb-2"><i class="bi bi-broadcast"></i> Ajouter une chaîne existante</h6>
                         <p class="small text-secondary mb-2">
                             <strong>Légendes</strong> : la légende de chaque vidéo indique la série et l'épisode
                             (« Mon Drama – Épisode 3 », « EP 3 », « الحلقة 3 », « #MonDrama #3 »).<br>
@@ -281,6 +297,14 @@
                         {% if tg.authorized %}
                         <form method="post" action="/admin/telegram/channels/add" class="row g-2 mb-3">
                             <div class="col-12 col-md"><input name="ref" class="form-control form-control-sm" placeholder="@machaine ou https://t.me/machaine" required></div>
+                            {% if live_accounts|length > 1 %}
+                            <div class="col-12 col-md-auto">
+                                <select name="account_id" class="form-select form-select-sm" title="Compte qui lit la chaîne">
+                                    <option value="">Compte : automatique</option>
+                                    {% for a in live_accounts %}<option value="{{ a.id }}">{{ a.name }}</option>{% endfor %}
+                                </select>
+                            </div>
+                            {% endif %}
                             <div class="col-7 col-md-auto">
                                 <select name="mode" class="form-select form-select-sm">
                                     <option value="caption">Légendes</option>
@@ -291,17 +315,18 @@
                         </form>
 
                         {% if not tg_dialogs %}
-                            <a href="/admin?tab=telegram&tg_dialogs=1" class="btn btn-sm btn-outline-light"><i class="bi bi-list-ul"></i> Choisir parmi mes chaînes</a>
+                            <a href="/admin?tab=telegram&tg_dialogs=1" class="btn btn-sm btn-outline-light"><i class="bi bi-list-ul"></i> Choisir parmi les chaînes de mes comptes</a>
                         {% elif tg_available %}
-                            <div class="small text-secondary mb-2">Chaînes et groupes de votre compte :</div>
+                            <div class="small text-secondary mb-2">Chaînes et groupes de vos comptes :</div>
                             <div class="list-group list-group-flush" style="max-height: 280px; overflow:auto">
                             {% for c in tg_available %}
                                 <form method="post" action="/admin/telegram/channels/add" class="list-group-item bg-transparent d-flex align-items-center gap-2 px-0">
                                     <input type="hidden" name="ref" value="{{ c.peer_id }}">
+                                    <input type="hidden" name="account_id" value="{{ c.account_id }}">
                                     <i class="bi {{ 'bi-megaphone' if c.broadcast else 'bi-people' }} text-secondary"></i>
                                     <div class="flex-grow-1 small">
-                                        <div class="text-white">{{ c.title }}</div>
-                                        {% if c.username %}<div class="text-secondary">@{{ c.username }}</div>{% endif %}
+                                        <div class="text-white">{{ c.title }}{% if c.admin %} <span class="badge text-bg-secondary">admin</span>{% endif %}</div>
+                                        <div class="text-secondary">{% if c.username %}@{{ c.username }} · {% endif %}{{ c.account }}</div>
                                     </div>
                                     <select name="mode" class="form-select form-select-sm w-auto">
                                         <option value="caption">Légendes</option>
@@ -312,10 +337,47 @@
                             {% endfor %}
                             </div>
                         {% else %}
-                            <div class="small text-secondary">Aucune autre chaîne trouvée sur ce compte.</div>
+                            <div class="small text-secondary">Aucune autre chaîne trouvée sur vos comptes.</div>
                         {% endif %}
                         {% else %}
-                        <div class="small text-secondary">Connectez d'abord votre compte Telegram.</div>
+                        <div class="small text-secondary">Connectez d'abord un compte Telegram.</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="card p-3">
+                        <h6 class="fw-bold mb-2"><i class="bi bi-plus-square"></i> Créer une nouvelle chaîne Telegram</h6>
+                        {% if live_accounts %}
+                        <p class="small text-secondary mb-2">La chaîne est créée sur Telegram par le compte choisi (il en devient propriétaire), puis liée au serveur.</p>
+                        <form method="post" action="/admin/telegram/channels/create" class="row g-2">
+                            <div class="col-md-6"><input name="title" class="form-control form-control-sm" placeholder="Nom de la chaîne (ex. DramaBiliki Stock 2)" required maxlength="128"></div>
+                            <div class="col-md-6">
+                                <select name="account_id" class="form-select form-select-sm" required>
+                                    {% for a in live_accounts %}<option value="{{ a.id }}">Créer avec : {{ a.name }}</option>{% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-6"><input name="about" class="form-control form-control-sm" placeholder="Description (facultatif)" maxlength="255"></div>
+                            <div class="col-md-6">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">@</span>
+                                    <input name="username" class="form-control" placeholder="nom public (vide = chaîne privée)" pattern="[A-Za-z][A-Za-z0-9_]{4,31}">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <select name="mode" class="form-select form-select-sm">
+                                    <option value="caption">Mode : Légendes</option>
+                                    <option value="single">Mode : Une série</option>
+                                </select>
+                            </div>
+                            <div class="col-md-5 d-flex align-items-center">
+                                <div class="form-check mb-0 small">
+                                    <input class="form-check-input" type="checkbox" name="upload_target" value="1" id="newChanUpload" checked>
+                                    <label class="form-check-label" for="newChanUpload">Y envoyer les vidéos téléversées</label>
+                                </div>
+                            </div>
+                            <div class="col-md-3"><button class="btn btn-sm btn-brand w-100"><i class="bi bi-plus-lg"></i> Créer</button></div>
+                        </form>
+                        {% else %}
+                        <div class="small text-secondary">Connectez d'abord un compte Telegram.</div>
                         {% endif %}
                     </div>
                 </div>
@@ -325,7 +387,7 @@
                         <h6 class="fw-bold mb-3">Chaînes liées</h6>
                         <div class="table-responsive">
                             <table class="table table-hover align-middle">
-                                <thead><tr><th>Chaîne</th><th>Mode</th><th>Vidéos</th><th>Dernière synchro</th><th class="text-end">Actions</th></tr></thead>
+                                <thead><tr><th>Chaîne</th><th>Compte</th><th>Mode</th><th>Vidéos</th><th>Dernière synchro</th><th class="text-end">Actions</th></tr></thead>
                                 <tbody>
                                 {% for c in tg_channels %}
                                     <tr class="{{ '' if c.enabled else 'opacity-50' }}">
@@ -333,6 +395,14 @@
                                             <div class="fw-semibold text-white">{{ c.title }}</div>
                                             <div class="small text-secondary">{{ '@' ~ c.username if c.username else c.peer_id }}</div>
                                             {% if c.last_error %}<div class="small text-danger">{{ c.last_error }}</div>{% endif %}
+                                        </td>
+                                        <td>
+                                            <form method="post" action="/admin/telegram/channels/{{ c.id }}/account">
+                                                <select name="account_id" class="form-select form-select-sm w-auto" onchange="this.form.submit()" title="Compte qui lit cette chaîne">
+                                                    {% if c.account_id not in account_ids %}<option value="" selected>— aucun —</option>{% endif %}
+                                                    {% for a in tg.accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == c.account_id }}>{{ a.name or ('Compte #' ~ a.id) }}</option>{% endfor %}
+                                                </select>
+                                            </form>
                                         </td>
                                         <td>
                                             <form method="post" action="/admin/telegram/channels/{{ c.id }}/mode">
@@ -361,7 +431,7 @@
                                         </td>
                                     </tr>
                                 {% else %}
-                                    <tr><td colspan="5" class="text-center text-secondary py-4">Aucune chaîne liée pour le moment.</td></tr>
+                                    <tr><td colspan="6" class="text-center text-secondary py-4">Aucune chaîne liée pour le moment.</td></tr>
                                 {% endfor %}
                                 </tbody>
                             </table>

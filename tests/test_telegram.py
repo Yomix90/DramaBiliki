@@ -73,7 +73,7 @@ def test_sync_groups_videos_by_caption(channel, monkeypatch):
         _video(14, "Love Story"),  # no number -> next free (3)
     ]
 
-    async def fake_client():
+    async def fake_client(*args):
         return FakeClient(messages)
 
     monkeypatch.setattr(telegram_service, "authorized_client", fake_client)
@@ -97,7 +97,7 @@ def test_single_mode_makes_one_series(channel, monkeypatch):
     ch.mode = "single"
     db.commit()
 
-    async def fake_client():
+    async def fake_client(*args):
         return FakeClient([_video(1, "Trailer"), _video(2, ""), _video(3, "whatever")])
 
     monkeypatch.setattr(telegram_service, "authorized_client", fake_client)
@@ -204,7 +204,7 @@ def test_orphan_videos_listing_attach_and_delete(channel, monkeypatch):
         async def get_messages(self, peer, ids):
             return [m for m in self.messages if m.id in ids]
 
-    async def fake_client():
+    async def fake_client(*args):
         return Client(msgs)
 
     async def fake_status():
@@ -252,3 +252,98 @@ def test_dashboard_shows_live_activity_and_disk():
         assert client.get("/admin/api/status").json()["live"]["viewers"] >= 1
         r = client.post("/admin/cache/clear", follow_redirects=False)
         assert r.status_code == 303
+
+
+def test_legacy_session_migrates_to_accounts_and_channels_route_per_account(monkeypatch):
+    from bridge.models import AppConfig, TelegramAccount
+    from bridge.telegram import client as tg_client
+    init_db()
+    db = SessionLocal()
+    for row in db.query(TelegramAccount).all():
+        db.delete(row)
+    db.add(AppConfig(key=tg_client.KEY_SESSION, value="legacy-session", description=""))
+    old = TelegramChannel(peer_id=-1009990077, access_hash=7, title="Ancienne")
+    db.add(old)
+    db.commit()
+    telegram_service._migrated = False
+    telegram_service._accounts.clear()
+
+    rows = telegram_service.account_rows()
+    assert len(rows) == 1 and rows[0].session == "legacy-session"
+    db.refresh(old)
+    assert old.account_id == rows[0].id
+    assert db.query(AppConfig).filter(AppConfig.key == tg_client.KEY_SESSION).first() is None
+
+    # A second account: channels use their own account's client
+    second = TelegramAccount(session="second-session", name="Second")
+    db.add(second)
+    db.commit()
+    other = TelegramChannel(peer_id=-1009990078, access_hash=8, title="Nouvelle", account_id=second.id)
+    db.add(other)
+    db.commit()
+    used = []
+
+    async def fake_authorized(self):
+        used.append(self.account_id)
+        return SimpleNamespace(account=self.account_id)
+
+    monkeypatch.setattr(tg_client.AccountClient, "authorized_client", fake_authorized)
+    assert asyncio.run(telegram_service.client_for_channel(other)).account == second.id
+    assert asyncio.run(telegram_service.client_for_channel(old)).account == rows[0].id
+    assert used == [second.id, rows[0].id]
+
+    for obj in (old, other, second):
+        db.delete(obj)
+    db.delete(db.get(TelegramAccount, rows[0].id))
+    db.commit()
+    db.close()
+    telegram_service._accounts.clear()
+
+
+def test_create_channel_links_it_and_sets_upload_target(monkeypatch):
+    from bridge import app_settings
+    from bridge.models import TelegramAccount
+    init_db()
+    db = SessionLocal()
+    account = TelegramAccount(session="s", name="Créateur")
+    db.add(account)
+    db.commit()
+    created = {}
+
+    async def fake_create(account_id, title, about="", username=""):
+        created.update(account_id=account_id, title=title, username=username)
+        return SimpleNamespace(id=555001, access_hash=99, title=title, username="", broadcast=True), "Le nom public @pris est refusé"
+
+    monkeypatch.setattr(telegram_service, "create_channel", fake_create)
+    monkeypatch.setattr("telethon.utils.get_peer_id", lambda entity: -1000000555001)
+    with TestClient(app) as client:
+        _admin(client)
+        r = client.post("/admin/telegram/channels/create", data={
+            "title": "Stock 2", "account_id": account.id, "username": "pris", "mode": "caption", "upload_target": "1",
+        }, follow_redirects=False)
+        assert r.status_code == 303
+    ch = db.query(TelegramChannel).filter(TelegramChannel.peer_id == -1000000555001).one()
+    assert (ch.title, ch.account_id, ch.access_hash) == ("Stock 2", account.id, 99)
+    assert created == {"account_id": account.id, "title": "Stock 2", "username": "pris"}
+    assert app_settings.get("upload_channel_id") == str(ch.id)
+    db.delete(ch)
+    db.delete(account)
+    db.commit()
+    db.close()
+
+
+def test_telegram_tab_lists_accounts(monkeypatch):
+    async def fake_status():
+        return {"configured": True, "authorized": True, "account": "Alice, Bob", "pending_phone": "", "needs_password": False,
+                "error": "", "accounts": [
+                    {"id": 1, "name": "Alice", "phone": "+1", "authorized": True, "error": "", "channels": 2},
+                    {"id": 2, "name": "Bob", "phone": "+2", "authorized": True, "error": "", "channels": 0},
+                ]}
+
+    monkeypatch.setattr(telegram_service, "status", fake_status)
+    with TestClient(app) as client:
+        _admin(client)
+        page = client.get("/admin?tab=telegram").text
+    assert "Alice" in page and "Bob" in page
+    assert "Ajouter un autre compte" in page
+    assert "Créer une nouvelle chaîne Telegram" in page and "Créer avec : Bob" in page

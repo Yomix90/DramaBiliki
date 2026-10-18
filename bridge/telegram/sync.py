@@ -149,9 +149,9 @@ def _mime_type(message) -> str:
 
 async def sync_channel(db: Session, channel: TelegramChannel, full: bool = False) -> int:
     """Imports new videos of one channel. Returns the number of episodes added."""
-    client = await telegram_service.authorized_client()
+    client = await telegram_service.client_for_channel(channel)
     if client is None:
-        raise RuntimeError("Compte Telegram non connecté.")
+        raise RuntimeError("Compte Telegram de cette chaîne non connecté.")
 
     peer = telegram_service.input_peer(channel.peer_id, channel.access_hash)
     min_id = 0 if full else (channel.last_message_id or 0)

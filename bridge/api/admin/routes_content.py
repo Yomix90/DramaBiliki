@@ -810,9 +810,12 @@ async def tg_orphans(request: Request, limit: int = 2000, db: Session = Depends(
         (p, m) for p, m in db.query(Episode.tg_peer_id, Episode.tg_message_id).filter(Episode.tg_message_id.isnot(None))
     }
     rows, problems = [], []
-    client = await telegram_service.authorized_client() if tg["authorized"] else None
-    if client is not None:
+    if tg["authorized"]:
         for channel in channels:
+            client = await telegram_service.client_for_channel(channel)
+            if client is None:
+                problems.append(f"{channel.title} : compte Telegram de la chaîne non connecté")
+                continue
             peer = telegram_service.input_peer(channel.peer_id, channel.access_hash)
             try:
                 async for message in client.iter_messages(peer, limit=max(50, min(limit, 20000))):
@@ -879,12 +882,12 @@ async def tg_orphans_attach(request: Request, db: Session = Depends(get_db), adm
     if series is None:
         return _back("/admin/telegram/orphans", "Choisissez une série", "danger")
 
-    client = await telegram_service.authorized_client()
-    if client is None:
-        return _back("/admin/telegram/orphans", "Compte Telegram non connecté", "danger")
     found = []
     for peer_id, ids in groups.items():
         channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == peer_id).first()
+        client = await (telegram_service.client_for_channel(channel) if channel else telegram_service.authorized_client())
+        if client is None:
+            return _back("/admin/telegram/orphans", "Compte Telegram non connecté", "danger")
         messages = await client.get_messages(telegram_service.input_peer(peer_id, channel.access_hash if channel else None), ids=ids)
         for message in messages:
             if message is not None and message.file is not None:

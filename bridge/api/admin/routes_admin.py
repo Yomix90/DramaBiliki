@@ -365,39 +365,121 @@ async def tg_sign_in(code: str = Form(""), password: str = Form(""), admin: str 
         return _tg_redirect("Ce compte a la validation en deux étapes : entrez votre mot de passe Telegram.", "warning")
     except Exception as e:
         return _tg_redirect(_tg_error(e), "danger")
-    return _tg_redirect("Compte Telegram connecté. Ajoutez maintenant vos chaînes.", tg_dialogs=1)
+    return _tg_redirect("Compte Telegram connecté. Ajoutez ou créez maintenant vos chaînes.", tg_dialogs=1)
+
+
+@router.post("/telegram/cancel-login")
+async def tg_cancel_login(admin: str = Depends(require_admin)):
+    await telegram_service.cancel_login()
+    return _tg_redirect("Ajout du compte annulé.", "info")
+
+
+@router.post("/telegram/accounts/{account_id}/logout")
+async def tg_logout(account_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    channels = db.query(TelegramChannel).filter(TelegramChannel.account_id == account_id).all()
+    await telegram_service.log_out(account_id)
+    # Move its channels to another account that can read them (access hashes are per account)
+    moved, orphaned = 0, []
+    for channel in channels:
+        try:
+            entity, other = await telegram_service.resolve_channel(str(channel.peer_id))
+            channel.account_id, channel.access_hash = other, entity.access_hash
+            moved += 1
+        except Exception:
+            channel.account_id = None
+            orphaned.append(channel.title)
+    db.commit()
+    msg = "Compte Telegram déconnecté."
+    if moved:
+        msg += f" {moved} chaîne(s) reprise(s) par un autre compte."
+    if orphaned:
+        msg += " Sans compte : " + ", ".join(orphaned) + " (reconnectez un compte membre de ces chaînes)."
+        return _tg_redirect(msg, "warning")
+    return _tg_redirect(msg, "info")
 
 
 @router.post("/telegram/logout")
-async def tg_logout(admin: str = Depends(require_admin)):
-    await telegram_service.log_out()
-    return _tg_redirect("Compte Telegram déconnecté.", "info")
+async def tg_logout_legacy(db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Old single-account form: logs out the first account."""
+    rows = telegram_service.account_rows()
+    if not rows:
+        return _tg_redirect("Aucun compte connecté.", "info")
+    return await tg_logout(rows[0].id, db=db, admin=admin)
 
 
-@router.post("/telegram/channels/add")
-async def tg_add_channel(
-    ref: str = Form(...),
-    mode: str = Form("caption"),
-    db: Session = Depends(get_db),
-    admin: str = Depends(require_admin),
-):
+def _link_channel(db: Session, entity, account_id: int, mode: str) -> TelegramChannel:
     from telethon import utils as tg_utils
-    try:
-        entity = await telegram_service.resolve_channel(ref)
-    except Exception as e:
-        return _tg_redirect(_tg_error(e), "danger", tg_dialogs=1)
-
     peer_id = tg_utils.get_peer_id(entity)
     channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == peer_id).first()
     if channel is None:
         channel = TelegramChannel(peer_id=peer_id)
         db.add(channel)
     channel.access_hash = entity.access_hash
+    channel.account_id = account_id
     channel.title = entity.title or ""
     channel.username = entity.username or ""
     channel.mode = mode if mode in ("caption", "single") else "caption"
     channel.enabled = True
     db.commit()
+    return channel
+
+
+@router.post("/telegram/channels/create")
+async def tg_create_channel(
+    title: str = Form(...),
+    account_id: int = Form(...),
+    about: str = Form(""),
+    username: str = Form(""),
+    mode: str = Form("caption"),
+    upload_target: str = Form(""),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    """Creates a new channel on Telegram with the chosen account and links it."""
+    title = title.strip()
+    if not title:
+        return _tg_redirect("Donnez un nom à la chaîne.", "danger")
+    try:
+        entity, warning = await telegram_service.create_channel(account_id, title, about.strip(), username)
+    except Exception as e:
+        return _tg_redirect(_tg_error(e), "danger")
+    channel = _link_channel(db, entity, account_id, mode)
+    msg = f"Chaîne « {channel.title} » créée sur Telegram et liée. " + warning
+    if upload_target == "1":
+        from bridge import app_settings
+        app_settings.set_many({"upload_channel_id": str(channel.id), "upload_destination": "telegram"})
+        msg += " Elle reçoit désormais les vidéos téléversées."
+    return _tg_redirect(msg, "warning" if warning else "success")
+
+
+@router.post("/telegram/channels/{channel_id}/account")
+async def tg_channel_account(channel_id: int, account_id: int = Form(...), db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Reads the channel with another account (must be a member of it)."""
+    channel = db.get(TelegramChannel, channel_id)
+    if not channel:
+        return _tg_redirect("Chaîne introuvable.", "danger")
+    try:
+        entity, acc = await telegram_service.resolve_channel(str(channel.peer_id), account_id)
+    except Exception as e:
+        return _tg_redirect(f"Ce compte n'a pas accès à « {channel.title} » : {_tg_error(e)}", "danger")
+    channel.account_id, channel.access_hash = acc, entity.access_hash
+    db.commit()
+    return _tg_redirect(f"« {channel.title} » utilise maintenant ce compte.")
+
+
+@router.post("/telegram/channels/add")
+async def tg_add_channel(
+    ref: str = Form(...),
+    mode: str = Form("caption"),
+    account_id: str = Form(""),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    try:
+        entity, acc = await telegram_service.resolve_channel(ref, int(account_id) if account_id.isdigit() else None)
+    except Exception as e:
+        return _tg_redirect(_tg_error(e), "danger", tg_dialogs=1)
+    channel = _link_channel(db, entity, acc, mode)
 
     if not is_sync_running():
         _start_telegram_sync(channel.id)

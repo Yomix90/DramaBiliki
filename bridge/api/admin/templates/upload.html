@@ -23,7 +23,7 @@
                 <select name="channel_id" class="form-select form-select-sm mt-1 ms-4" style="width: calc(100% - 1.5rem)">
                     <option value="">— Choisir la chaîne de destination —</option>
                     {% for c in channels %}
-                    <option value="{{ c.id }}" {{ 'selected' if cfg.upload_channel_id == c.id|string }}>{{ c.title }}</option>
+                    <option value="{{ c.id }}" {{ 'selected' if cfg.upload_channel_id == c.id|string }}>{{ c.title }}{% for a in tg.accounts if a.id == c.account_id %} — {{ a.name }}{% endfor %}</option>
                     {% endfor %}
                 </select>
                 {% if not tg.authorized %}<div class="small text-warning ms-4 mt-1">Compte Telegram non connecté (onglet Telegram du tableau de bord).</div>{% endif %}

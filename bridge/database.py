@@ -35,6 +35,9 @@ _ADDED_COLUMNS = {
         "mime_type": "VARCHAR(64) DEFAULT ''",
         "local_file": "VARCHAR(255) DEFAULT ''",
     },
+    "telegram_channels": {
+        "account_id": "INTEGER",
+    },
     "users": {
         "is_active": "BOOLEAN DEFAULT 1",
         "ads_free": "BOOLEAN DEFAULT 0",

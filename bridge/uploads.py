@@ -420,9 +420,6 @@ async def _send_to_telegram(job: UploadJob, path: Path, series_id: int, ep_num: 
     from bridge.telegram.client import telegram_service
     from bridge.telegram.fast_upload import fast_upload_file
 
-    client = await telegram_service.authorized_client()
-    if client is None:
-        raise RuntimeError("Compte Telegram non connecté (ou choisissez le stockage « Serveur »)")
     channel_id = app_settings.get("upload_channel_id")
     db = SessionLocal()
     try:
@@ -433,6 +430,9 @@ async def _send_to_telegram(job: UploadJob, path: Path, series_id: int, ep_num: 
         db.close()
     if channel is None:
         raise RuntimeError("Aucune chaîne Telegram de destination choisie (Admin → Téléverser)")
+    client = await telegram_service.client_for_channel(channel)
+    if client is None:
+        raise RuntimeError("Compte Telegram de la chaîne non connecté (ou choisissez le stockage « Serveur »)")
 
     def on_progress(sent: int, total: int) -> None:
         job.touch(progress=sent / total)
