@@ -72,6 +72,11 @@ async def lifespan(app: FastAPI):
         pass
     await stream_resolver.close()
     await telegram_service.close()
+    try:
+        from bridge.activity import save_traffic
+        save_traffic()
+    except Exception:
+        pass
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -100,6 +105,30 @@ class SelectiveGZipMiddleware:
 
 
 app.add_middleware(SelectiveGZipMiddleware)
+
+
+class TrafficMiddleware:
+    """Counts the bytes sent for videos, covers and the APK (monthly VPS traffic)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope.get("path", "").startswith(_NO_GZIP_PREFIXES):
+            return await self.app(scope, receive, send)
+        if any(k == b"x-load-test" for k, _ in scope.get("headers", [])):
+            return await self.app(scope, receive, send)
+        from bridge.activity import add_traffic
+
+        async def counting_send(message):
+            if message["type"] == "http.response.body":
+                add_traffic(len(message.get("body", b"")))
+            await send(message)
+
+        await self.app(scope, receive, counting_send)
+
+
+app.add_middleware(TrafficMiddleware)
 
 # CORS configuration (the API uses bearer tokens, not cookies, so credentials are not needed)
 app.add_middleware(

@@ -24,6 +24,14 @@ DEFAULTS: Dict[str, str] = {
     "upload_destination": "telegram",  # telegram | local
     "upload_channel_id": "",
     "upload_convert_ts": "true",
+    # Performance (see bridge/optimizer.py)
+    "perf_optimize": "true",  # compress heavy videos (uploads + Telegram cache)
+    "perf_max_height": "720",  # short side of the compressed video
+    "perf_crf": "27",
+    "perf_maxrate_kbps": "1200",
+    "perf_cache_enabled": "true",  # keep the most watched Telegram episodes on disk
+    "perf_cache_max_gb": "15",
+    "traffic_quota_tb": "20",  # monthly outgoing traffic of the VPS offer
 }
 
 _CACHE_SECONDS = 10

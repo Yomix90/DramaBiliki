@@ -948,8 +948,53 @@ async def loadtest_page(request: Request, db: Session = Depends(get_db), admin: 
     sample = _loadtest_episodes(db, "all")
     rates = [e["bitrate_bps"] for e in sample if e["bitrate_bps"]]
     avg_bitrate = int(sum(rates) / len(rates)) if rates else DEFAULT_BITRATE
+    from bridge.activity import disk_usage, traffic
+    from bridge.optimizer import telegram_cache
+    from bridge.video_tools import ffmpeg_available
     return _page(request, "loadtest.html", admin=admin, status=loadtest.read_status(), running=loadtest.is_running(),
-                 counts=counts, avg_bitrate=avg_bitrate, presets=LOADTEST_PRESETS, system=loadtest.system_info())
+                 counts=counts, avg_bitrate=avg_bitrate, presets=LOADTEST_PRESETS, system=loadtest.system_info(),
+                 cfg=app_settings.get_all(), cache=telegram_cache.stats(), traffic=traffic(), disk=disk_usage(),
+                 ffmpeg=ffmpeg_available())
+
+
+@router.post("/performance")
+async def performance_save(
+    perf_optimize: str = Form(""),
+    perf_cache_enabled: str = Form(""),
+    perf_cache_max_gb: str = Form("15"),
+    perf_maxrate_kbps: str = Form("1200"),
+    perf_max_height: str = Form("720"),
+    traffic_quota_tb: str = Form("20"),
+    admin: str = Depends(require_admin),
+):
+    def num(value: str, low: float, high: float, default: float) -> str:
+        try:
+            v = float(value.replace(",", "."))
+        except ValueError:
+            v = default
+        v = max(low, min(high, v))
+        return str(int(v)) if v == int(v) else str(round(v, 1))
+    app_settings.set_many({
+        "perf_optimize": "true" if perf_optimize else "false",
+        "perf_cache_enabled": "true" if perf_cache_enabled else "false",
+        "perf_cache_max_gb": num(perf_cache_max_gb, 1, 2000, 15),
+        "perf_maxrate_kbps": num(perf_maxrate_kbps, 400, 8000, 1200),
+        "perf_max_height": str(int(perf_max_height)) if perf_max_height in ("480", "540", "720", "1080") else "720",
+        "traffic_quota_tb": num(traffic_quota_tb, 0, 1000, 20),
+    })
+    from bridge.optimizer import telegram_cache
+    freed = telegram_cache.evict()
+    msg = "Réglages de performance enregistrés"
+    if freed:
+        msg += f" ({freed // 1048576} Mo libérés dans le cache)"
+    return _back("/admin/loadtest", msg)
+
+
+@router.post("/performance/cache/clear")
+async def performance_cache_clear(admin: str = Depends(require_admin)):
+    from bridge.optimizer import telegram_cache
+    freed = telegram_cache.clear()
+    return _back("/admin/loadtest", f"Cache vidéo vidé ({freed // 1048576} Mo libérés)", "info")
 
 
 @router.get("/loadtest/status")

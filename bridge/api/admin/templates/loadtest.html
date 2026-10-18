@@ -1,9 +1,110 @@
 {% extends "_base.html" %}
 {% set active = 'loadtest' %}
-{% block title %}Test de charge — DramaBiliki Admin{% endblock %}
-{% block page_title %}Test de charge{% endblock %}
-{% block page_sub %}Combien de spectateurs votre serveur peut-il servir en même temps ?{% endblock %}
+{% block title %}Performance — DramaBiliki Admin{% endblock %}
+{% block page_title %}Performance & test de charge{% endblock %}
+{% block page_sub %}Optimisations, trafic et nombre de spectateurs que votre serveur peut servir{% endblock %}
 {% block content %}
+{% macro fmt(b) %}{% if b >= 1e12 %}{{ '%.2f'|format(b / 1e12) }} To{% elif b >= 1073741824 %}{{ '%.1f'|format(b / 1073741824) }} Go{% else %}{{ '%.0f'|format(b / 1048576) }} Mo{% endif %}{% endmacro %}
+<div class="row g-3 mb-3">
+    <div class="col-lg-5">
+        <div class="card p-3 h-100">
+            <h6 class="fw-bold mb-2"><i class="bi bi-lightning-charge"></i> Optimisations</h6>
+            <p class="small text-secondary mb-3">
+                Plus de spectateurs avec le même VPS : vidéos plus légères (moins de trafic par spectateur)
+                et épisodes les plus regardés gardés sur le disque (moins de travail pour le serveur).
+            </p>
+            {% if not ffmpeg %}<div class="alert alert-warning small py-2">ffmpeg introuvable : la compression est désactivée.</div>{% endif %}
+            <form method="post" action="/admin/performance" class="row g-2">
+                <div class="col-12">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" name="perf_optimize" value="1" id="perfOpt" {{ 'checked' if cfg.perf_optimize == 'true' }}>
+                        <label class="form-check-label small" for="perfOpt"><strong class="text-white">Compresser les vidéos lourdes</strong>
+                            <span class="text-secondary d-block">Téléversements et cache Telegram (l'original reste sur Telegram).</span></label>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Qualité maximale</label>
+                    <select name="perf_max_height" class="form-select form-select-sm">
+                        {% for h, label in [('480', '480p (économie max)'), ('540', '540p'), ('720', '720p (recommandé)'), ('1080', '1080p')] %}
+                        <option value="{{ h }}" {{ 'selected' if cfg.perf_max_height == h }}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Débit vidéo maximal</label>
+                    <div class="input-group input-group-sm">
+                        <input name="perf_maxrate_kbps" class="form-control" value="{{ cfg.perf_maxrate_kbps }}" inputmode="numeric">
+                        <span class="input-group-text">kbit/s</span>
+                    </div>
+                </div>
+                <div class="col-12 mt-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" role="switch" name="perf_cache_enabled" value="1" id="perfCache" {{ 'checked' if cfg.perf_cache_enabled == 'true' }}>
+                        <label class="form-check-label small" for="perfCache"><strong class="text-white">Garder les épisodes populaires sur le disque</strong>
+                            <span class="text-secondary d-block">Servis depuis le VPS au lieu de passer par Telegram.</span></label>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Taille maximale du cache</label>
+                    <div class="input-group input-group-sm">
+                        <input name="perf_cache_max_gb" class="form-control" value="{{ cfg.perf_cache_max_gb }}" inputmode="decimal">
+                        <span class="input-group-text">Go</span>
+                    </div>
+                    <div class="form-text small">Disque libre : {{ fmt(disk.free) }}</div>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Trafic inclus dans l'offre</label>
+                    <div class="input-group input-group-sm">
+                        <input name="traffic_quota_tb" class="form-control" value="{{ cfg.traffic_quota_tb }}" inputmode="decimal">
+                        <span class="input-group-text">To / mois</span>
+                    </div>
+                </div>
+                <div class="col-12 mt-2"><button class="btn btn-sm btn-brand w-100"><i class="bi bi-check2"></i> Enregistrer</button></div>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="card p-3 mb-3">
+            <h6 class="fw-bold mb-2"><i class="bi bi-arrow-up-circle"></i> Trafic sortant ce mois</h6>
+            <div class="d-flex justify-content-between small mb-1">
+                <span><strong class="text-white">{{ fmt(traffic.used) }}</strong>{% if traffic.quota %} sur {{ fmt(traffic.quota) }}{% endif %}</span>
+                <span class="text-secondary">moyenne {{ traffic.avg_mbps }} Mbit/s</span>
+            </div>
+            {% if traffic.quota %}
+            <div class="progress mb-2" style="height:8px;background:var(--surface2)">
+                <div class="progress-bar" style="width:{{ [traffic.percent, 100]|min }}%;background:{{ '#ff2e55' if traffic.projected_percent > 100 else 'linear-gradient(90deg,#ff2e55,#ff7a45)' }}"></div>
+            </div>
+            <div class="small {{ 'text-danger' if traffic.projected_percent > 100 else 'text-warning' if traffic.projected_percent > 80 else 'text-secondary' }}">
+                À ce rythme : environ <strong>{{ fmt(traffic.projected) }}</strong> à la fin du mois ({{ traffic.projected_percent }} % de l'offre).
+                {% if traffic.projected_percent > 100 %}Activez la compression ou baissez la qualité maximale.{% endif %}
+            </div>
+            {% endif %}
+            <div class="small text-secondary mt-1">Vidéos, affiches et APK envoyés aux utilisateurs (hors tests de charge).</div>
+        </div>
+        <div class="card p-3">
+            <div class="section-head mb-2">
+                <h6 class="fw-bold mb-0"><i class="bi bi-hdd-stack"></i> Cache des épisodes Telegram</h6>
+                <form method="post" action="/admin/performance/cache/clear" class="m-0" onsubmit="return confirm('Vider le cache ? Les épisodes repasseront par Telegram.')">
+                    <button class="btn btn-sm btn-outline-secondary"><i class="bi bi-trash3"></i> Vider</button>
+                </form>
+            </div>
+            <div class="d-flex justify-content-between small mb-1">
+                <span><strong class="text-white">{{ cache.files }}</strong> épisode(s) · {{ fmt(cache.size) }} sur {{ fmt(cache.limit) }}</span>
+                <span class="text-secondary">{{ 'activé' if cache.enabled else 'désactivé' }}</span>
+            </div>
+            <div class="progress mb-2" style="height:8px;background:var(--surface2)">
+                <div class="progress-bar" style="width:{{ [100 * cache.size / cache.limit, 100]|min if cache.limit else 0 }}%;background:linear-gradient(90deg,#229ED9,#5ac8fa)"></div>
+            </div>
+            <div class="small text-secondary">
+                {% if cache.current %}En cours de préparation : 1 épisode · {% endif %}
+                En attente : {{ cache.pending }} · traités depuis le démarrage : {{ cache.processed }}
+                {% if cache.saved_bytes %} · {{ fmt(cache.saved_bytes) }} économisés par la compression{% endif %}
+                {% if cache.failures %} · <span class="text-warning">{{ cache.failures }} échec(s)</span>{% endif %}
+            </div>
+            <div class="small text-secondary mt-1">Les épisodes les plus demandés passent en premier ; les moins regardés sont retirés quand le cache est plein.</div>
+        </div>
+    </div>
+</div>
 <div class="row g-3 mb-3">
     <div class="col-lg-5">
         <div class="card p-3 h-100">

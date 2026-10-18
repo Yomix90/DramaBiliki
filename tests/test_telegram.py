@@ -363,7 +363,7 @@ def test_loadtest_page_and_start(monkeypatch):
     with TestClient(app) as client:
         _admin(client)
         page = client.get("/admin/loadtest").text
-        assert "Test de charge" in page and "Lancer le test" in page
+        assert "test de charge" in page and "Lancer le test" in page and "Trafic sortant ce mois" in page
         r = client.post("/admin/loadtest/start", data={"custom_steps": "3, 9", "step_seconds": "30", "source": "local",
                                                        "target": "internal", "bandwidth_mbps": "1000"}, follow_redirects=False)
         assert r.status_code == 303
@@ -378,3 +378,73 @@ def test_loadtest_page_and_start(monkeypatch):
     db.delete(series)
     db.commit()
     db.close()
+
+
+def test_telegram_cache_serves_copy_without_switching_mid_playback(channel, monkeypatch, tmp_path):
+    import shutil
+    from bridge import optimizer
+    db, ch = channel
+    series = Series(source_id="cache-1", slug="cache-1", title="Cache", source_type="telegram",
+                    tg_channel_id=ch.id, status="active", available_episodes=1, total_episodes=1)
+    db.add(series)
+    db.commit()
+    original = b"O" * 5000
+    db.add(Episode(series_id=series.id, num=1, tg_peer_id=ch.peer_id, tg_message_id=777, file_size=len(original), mime_type="video/mp4"))
+    db.commit()
+
+    src = tmp_path / "telegram.mp4"
+    src.write_bytes(original)
+
+    class Msg:
+        file = SimpleNamespace(size=len(original), duration=60)
+
+        async def download_media(self, file):
+            shutil.copy(src, file)
+
+    async def fake_get_message(peer_id, access_hash, message_id, refresh=False):
+        return Msg()
+
+    async def fake_iter_bytes(message, start, end):
+        yield original[start:end + 1]
+
+    async def fake_compress(a, b):
+        b.write_bytes(b"C" * 1000)  # the compressed copy has different bytes
+        return True
+
+    monkeypatch.setattr(telegram_service, "get_message", fake_get_message)
+    monkeypatch.setattr(telegram_service, "iter_bytes", fake_iter_bytes)
+    monkeypatch.setattr(optimizer, "compress", fake_compress)
+    monkeypatch.setattr(optimizer, "needs_compression", lambda size, duration: True)
+    optimizer.telegram_cache.clear()
+
+    with TestClient(app) as client:
+        url = f"/stream/{series.id}/1.mp4"
+        # First playback comes from Telegram and queues the episode for the cache
+        r = client.get(url, headers={"Range": "bytes=0-99"})
+        assert r.status_code == 206 and r.content == original[:100]
+        asyncio.run(optimizer.telegram_cache._cache_one(ch.peer_id, 1, 777))
+        assert optimizer.cache_path(ch.peer_id, 777).read_bytes() == b"C" * 1000
+        # Same playback continues (Range not at 0): still the original bytes
+        r = client.get(url, headers={"Range": "bytes=100-199"})
+        assert r.content == original[100:200]
+        # A new playback gets the compressed copy from disk
+        r = client.get(url, headers={"Range": "bytes=0-"})
+        assert r.content == b"C" * 1000
+        r = client.get(url, headers={"Range": "bytes=500-599"})
+        assert r.content == b"C" * 100
+    assert optimizer.telegram_cache.saved_bytes >= 4000
+    optimizer.telegram_cache.clear()
+    db.delete(series)
+    db.commit()
+
+
+def test_traffic_counter_counts_video_bytes():
+    from bridge import activity
+    before = activity.traffic()["used"]
+    activity.add_traffic(10 ** 9)
+    info = activity.traffic()
+    assert info["used"] - before == 10 ** 9
+    assert info["quota"] == 20e12 and info["projected"] >= info["used"]
+    activity.save_traffic()
+    activity._traffic["month"] = ""  # reload from the database
+    assert activity.traffic()["used"] - before == 10 ** 9

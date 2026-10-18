@@ -244,9 +244,23 @@ async def stream_telegram_episode(
     if not episode.tg_message_id:
         raise HTTPException(status_code=404, detail="Episode not available")
 
-    cached = _cache_path(episode)
+    # Disk cache (compressed copy of the most watched episodes). A playback keeps
+    # the same version for all its Range requests: the two files differ in bytes.
+    from bridge.optimizer import choose_version, telegram_cache
+    range_header = request.headers.get("range", "")
+    range_match = _RANGE_RE.fullmatch(range_header.strip())
+    range_start = int(range_match.group(1)) if range_match and range_match.group(1) else 0
+    optimized = telegram_cache.lookup(episode.tg_peer_id, episode.tg_message_id)
+    client_id = request.client.host if request.client else "?"
+    if choose_version(client_id, series_id, ep_num, range_start, optimized is not None) == "cache":
+        return FileResponse(optimized, media_type="video/mp4", headers={"Cache-Control": "public, max-age=86400"})
+
+    cached = _cache_path(episode)  # legacy TG_CACHE_VIDEOS copy: same bytes as on Telegram
     if cached.is_file():
         return FileResponse(cached, media_type=episode.mime_type or "video/mp4", headers={"Cache-Control": "public, max-age=86400"})
+
+    if not request.headers.get("x-load-test"):
+        telegram_cache.note_request(episode.tg_peer_id, access_hash, episode.tg_message_id)
 
     try:
         message = await telegram_service.get_message(episode.tg_peer_id, access_hash, episode.tg_message_id)

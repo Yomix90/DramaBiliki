@@ -6,6 +6,7 @@ Live activity (in memory): who is watching right now, and disk usage.
 - Streams: each video request is recorded by client address; addresses seen in
   the last minute count as streams in progress.
 """
+import datetime
 import shutil
 import time
 from pathlib import Path
@@ -72,7 +73,7 @@ def disk_usage() -> dict:
         "Base de données": _dir_size(db_file) if db_file else 0,
         "Affiches": _dir_size(settings.COVERS_DIR),
         "Vidéos sur le serveur": _dir_size(videos / "local"),
-        "Cache vidéo Telegram": sum(_dir_size(f) for f in videos.glob("*.mp4")) if videos.exists() else 0,
+        "Cache vidéo Telegram": (sum(_dir_size(f) for f in videos.glob("*.mp4")) if videos.exists() else 0) + _dir_size(videos / "cache"),
         "Téléversements en cours": _dir_size(settings.MEDIA_DIR / "uploads_tmp"),
         "APK": _dir_size(settings.MEDIA_DIR / "apk"),
         "Sauvegardes automatiques": _dir_size(settings.DATA_DIR / "backups"),
@@ -91,10 +92,99 @@ def clear_telegram_cache() -> int:
     videos = settings.MEDIA_DIR / "videos"
     freed = 0
     if videos.exists():
-        for f in list(videos.glob("*.mp4")) + list(videos.glob("*.part")):
+        for f in list(videos.glob("*.mp4")) + list(videos.glob("*.part")) + list((videos / "cache").glob("*")):
             try:
                 freed += f.stat().st_size
                 f.unlink()
             except OSError:
                 pass
     return freed
+
+
+# ---------------------------------------------------------------------------
+# Outgoing traffic of the month (videos, covers, APK), saved every minute
+# ---------------------------------------------------------------------------
+
+_traffic = {"month": "", "bytes": 0, "unsaved": 0, "saved_at": 0.0}
+
+
+def _month() -> str:
+    return datetime.datetime.utcnow().strftime("%Y-%m")
+
+
+def _traffic_key(month: str) -> str:
+    return f"traffic_{month}"
+
+
+def _load_traffic() -> None:
+    from bridge.database import SessionLocal
+    from bridge.models import AppConfig
+    month = _month()
+    db = SessionLocal()
+    try:
+        row = db.get(AppConfig, _traffic_key(month))
+        _traffic.update(month=month, bytes=int(row.value) if row and row.value.isdigit() else 0, unsaved=0)
+    finally:
+        db.close()
+
+
+def save_traffic() -> None:
+    from bridge.database import SessionLocal
+    from bridge.models import AppConfig
+    if not _traffic["month"]:
+        return
+    db = SessionLocal()
+    try:
+        key = _traffic_key(_traffic["month"])
+        row = db.get(AppConfig, key)
+        if row:
+            row.value = str(_traffic["bytes"])
+        else:
+            db.add(AppConfig(key=key, value=str(_traffic["bytes"]), description="Trafic sortant du mois (octets)"))
+        db.commit()
+        _traffic["unsaved"] = 0
+        _traffic["saved_at"] = time.time()
+    finally:
+        db.close()
+
+
+def add_traffic(n: int) -> None:
+    if not n:
+        return
+    if _traffic["month"] != _month():
+        if _traffic["month"] and _traffic["unsaved"]:
+            save_traffic()
+        _load_traffic()
+    _traffic["bytes"] += n
+    _traffic["unsaved"] += n
+    if time.time() - _traffic["saved_at"] > 60:
+        try:
+            save_traffic()
+        except Exception:
+            pass  # never break a video because of the counter
+
+
+def traffic() -> dict:
+    """This month's outgoing traffic, the quota and the projection to the end of the month."""
+    from bridge import app_settings
+    if _traffic["month"] != _month():
+        _load_traffic()
+    now = datetime.datetime.utcnow()
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    nxt = (start + datetime.timedelta(days=32)).replace(day=1)
+    elapsed = max((now - start).total_seconds(), 3600)
+    total = (nxt - start).total_seconds()
+    try:
+        quota = float(app_settings.get("traffic_quota_tb") or 0) * 1e12
+    except ValueError:
+        quota = 0
+    used = _traffic["bytes"]
+    projected = used * total / elapsed
+    return {
+        "used": used,
+        "quota": quota,
+        "percent": round(100 * used / quota, 1) if quota else 0,
+        "projected": projected,
+        "projected_percent": round(100 * projected / quota, 1) if quota else 0,
+        "avg_mbps": round(used * 8 / elapsed / 1e6, 1),
+    }

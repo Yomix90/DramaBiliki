@@ -344,6 +344,19 @@ async def _process(job: UploadJob) -> None:
             src.unlink(missing_ok=True)
             work = mp4
     info = await probe(work)
+
+    # 3. Compression (heavy videos → ~720p, capped bitrate): less traffic per viewer
+    from bridge import optimizer
+    if optimizer.needs_compression(work.stat().st_size, info["duration"]):
+        if optimizer.encode_lock().locked():
+            job.touch(progress=0.25, message="En attente de compression (une à la fois)")
+        lighter = work.with_name(work.stem + ".opt.mp4")
+        before = work.stat().st_size
+        if await _compress_with_progress(job, optimizer, work, lighter):
+            work.unlink(missing_ok=True)
+            work = lighter
+            info = await probe(work)
+            job.touch(message=f"Compressée : {before // 1048576} → {work.stat().st_size // 1048576} Mo")
     if needs_cover:
         thumb = work.with_suffix(".jpg")
         if await thumbnail(work, thumb, info["duration"]):
@@ -413,6 +426,15 @@ async def _process(job: UploadJob) -> None:
         db.close()
     work.unlink(missing_ok=True)
     job.touch(status="done", progress=1.0, message="Terminé", result_series_id=series_id, result_episode=ep_num)
+
+
+async def _compress_with_progress(job: UploadJob, optimizer, src: Path, dst: Path) -> bool:
+    async def wait_for_lock():
+        while optimizer.encode_lock().locked():
+            await asyncio.sleep(1)
+    await wait_for_lock()
+    job.touch(progress=0.3, message="Compression de la vidéo")
+    return await optimizer.compress(src, dst)
 
 
 async def _send_to_telegram(job: UploadJob, path: Path, series_id: int, ep_num: int, info: dict):
