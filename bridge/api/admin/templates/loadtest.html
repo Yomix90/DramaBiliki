@@ -138,7 +138,8 @@
                 <div class="col-6">
                     <label class="form-label small text-secondary mb-1">Vidéos utilisées</label>
                     <select name="source" class="form-select form-select-sm">
-                        <option value="all">Toutes ({{ counts.all }}{{ '+' if counts.all >= 60 }})</option>
+                        <option value="disk" {{ 'selected' if counts.disk else 'disabled' }}>Sur le disque, recommandé ({{ counts.disk }}{{ '+' if counts.disk >= 60 }})</option>
+                        <option value="all" {{ 'selected' if not counts.disk }}>Toutes ({{ counts.all }}{{ '+' if counts.all >= 60 }})</option>
                         <option value="local" {{ 'disabled' if not counts.local }}>Disque du serveur ({{ counts.local }}{{ '+' if counts.local >= 60 }})</option>
                         <option value="telegram" {{ 'disabled' if not counts.telegram }}>Telegram ({{ counts.telegram }}{{ '+' if counts.telegram >= 60 }})</option>
                     </select>
@@ -175,7 +176,8 @@
                 <i class="bi bi-info-circle"></i> Le test tourne sur le VPS lui-même : il mesure la puissance du serveur
                 (processeur, disque, Telegram), pas la connexion internet. Indiquez le débit de votre offre VPS
                 pour estimer aussi la limite réseau.
-                Avec des vidéos Telegram, chaque spectateur virtuel télécharge depuis Telegram : évitez les tests trop longs.
+                Avec des vidéos Telegram pas encore en cache, chaque spectateur virtuel télécharge depuis Telegram,
+                qui limite alors le compte (« flood wait ») : le test mesure surtout cette limite, et les vrais spectateurs la subissent aussi.
             </div>
         </div>
     </div>
@@ -306,7 +308,7 @@ function render(d) {
         }
         html += '</ul>';
         if (cfg.source) {
-            html += `<div class="small text-secondary">Vidéos : ${{all: 'toutes', local: 'disque du serveur', telegram: 'Telegram'}[cfg.source]} ·
+            html += `<div class="small text-secondary">Vidéos : ${{disk: 'sur le disque', all: 'toutes', local: 'disque du serveur', telegram: 'Telegram'}[cfg.source]} ·
                      chemin : ${cfg.target === 'domain' ? 'via le domaine' : 'interne'} · paliers de ${cfg.step_seconds} s</div>`;
         }
         summary.innerHTML = html;

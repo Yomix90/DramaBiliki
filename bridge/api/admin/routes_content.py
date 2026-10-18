@@ -2,6 +2,8 @@
 Admin pages for content managed by hand: series (with cover upload), episodes,
 batch video uploads, user accounts, mobile app updates and rewarded ads.
 """
+import os
+import random
 import re
 import shutil
 import uuid
@@ -928,6 +930,20 @@ DEFAULT_BITRATE = 1_500_000  # typical 720p vertical short drama
 
 def _loadtest_episodes(db: Session, source: str) -> list:
     query = db.query(Episode).join(Series).filter(Series.status == "active")
+    if source == "disk":
+        # Server videos + Telegram episodes already in the disk cache (no Telegram download)
+        from bridge.optimizer import cache_path
+        out = []
+        candidates = query.filter(or_(Episode.tg_message_id.isnot(None), (Episode.local_file.isnot(None) & (Episode.local_file != "")))).all()
+        random.shuffle(candidates)
+        for ep in candidates:
+            if not ep.local_file and not cache_path(ep.tg_peer_id, ep.tg_message_id).is_file():
+                continue
+            bitrate = int(ep.file_size * 8 / ep.duration) if ep.file_size and ep.duration and ep.duration > 10 else 0
+            out.append({"series_id": ep.series_id, "num": ep.num, "bitrate_bps": bitrate if 150_000 < bitrate < 20_000_000 else 0})
+            if len(out) >= 60:
+                break
+        return out
     if source == "local":
         query = query.filter(Episode.local_file.isnot(None), Episode.local_file != "")
     elif source == "telegram":
@@ -944,7 +960,7 @@ def _loadtest_episodes(db: Session, source: str) -> list:
 @router.get("/loadtest", response_class=HTMLResponse)
 async def loadtest_page(request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
     from bridge import loadtest
-    counts = {src: len(_loadtest_episodes(db, src)) for src in ("all", "local", "telegram")}
+    counts = {src: len(_loadtest_episodes(db, src)) for src in ("disk", "all", "local", "telegram")}
     sample = _loadtest_episodes(db, "all")
     rates = [e["bitrate_bps"] for e in sample if e["bitrate_bps"]]
     avg_bitrate = int(sum(rates) / len(rates)) if rates else DEFAULT_BITRATE
@@ -1033,7 +1049,9 @@ async def loadtest_start(
     if not episodes:
         return _back("/admin/loadtest", "Aucun épisode lisible pour cette source", "danger")
     rates = [e["bitrate_bps"] for e in episodes if e["bitrate_bps"]]
-    base_url = public_base_url(request) if target == "domain" else f"http://127.0.0.1:{settings.PORT}"
+    # Behind nginx (docker/start.sh) Python listens on an internal port: test through nginx
+    public_port = os.getenv("PUBLIC_PORT") or settings.PORT
+    base_url = public_base_url(request) if target == "domain" else f"http://127.0.0.1:{public_port}"
     try:
         bandwidth = float(bandwidth_mbps.replace(",", ".")) if bandwidth_mbps.strip() else 0
     except ValueError:

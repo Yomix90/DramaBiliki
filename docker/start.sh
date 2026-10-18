@@ -26,7 +26,7 @@ sed -e "s|__PORT__|$PORT|g" -e "s|__APP_PORT__|$APP_PORT|g" -e "s|__MEDIA_DIR__|
 if ! nginx -t -q -c "$CONF_DIR/nginx.conf"; then direct "configuration nginx invalide"; fi
 
 # 1. Python on an internal port
-HOST=127.0.0.1 PORT="$APP_PORT" NGINX_ACCEL=1 python -m bridge &
+HOST=127.0.0.1 PORT="$APP_PORT" PUBLIC_PORT="$PORT" NGINX_ACCEL=1 python -m bridge &
 APP_PID=$!
 ready=0
 for _ in $(seq 1 120); do
