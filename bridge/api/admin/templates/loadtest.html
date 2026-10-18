@@ -1,0 +1,227 @@
+{% extends "_base.html" %}
+{% set active = 'loadtest' %}
+{% block title %}Test de charge — DramaBiliki Admin{% endblock %}
+{% block page_title %}Test de charge{% endblock %}
+{% block page_sub %}Combien de spectateurs votre serveur peut-il servir en même temps ?{% endblock %}
+{% block content %}
+<div class="row g-3 mb-3">
+    <div class="col-lg-5">
+        <div class="card p-3 h-100">
+            <h6 class="fw-bold mb-2"><i class="bi bi-speedometer2"></i> Lancer un test</h6>
+            <p class="small text-secondary mb-3">
+                Des spectateurs virtuels se comportent comme l'application : ils ouvrent l'accueil et une série,
+                puis regardent un épisode à sa vitesse réelle et passent au suivant après 15 à 45 s.
+                Leur nombre augmente par paliers jusqu'à ce que le serveur sature.
+            </p>
+            <form method="post" action="/admin/loadtest/start" class="row g-2">
+                <div class="col-12">
+                    <label class="form-label small text-secondary mb-1">Paliers de spectateurs simultanés</label>
+                    <select name="preset" class="form-select form-select-sm">
+                        <option value="light">Léger : {{ presets.light|join(' → ') }}</option>
+                        <option value="standard" selected>Standard : {{ presets.standard|join(' → ') }}</option>
+                        <option value="intense">Intense : {{ presets.intense|join(' → ') }}</option>
+                    </select>
+                </div>
+                <div class="col-12">
+                    <input name="custom_steps" class="form-control form-control-sm" placeholder="ou paliers personnalisés, ex. 20, 60, 120">
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Durée de chaque palier</label>
+                    <select name="step_seconds" class="form-select form-select-sm">
+                        <option value="30">30 s</option>
+                        <option value="45" selected>45 s</option>
+                        <option value="90">90 s</option>
+                        <option value="180">3 min</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Vidéos utilisées</label>
+                    <select name="source" class="form-select form-select-sm">
+                        <option value="all">Toutes ({{ counts.all }}{{ '+' if counts.all >= 60 }})</option>
+                        <option value="local" {{ 'disabled' if not counts.local }}>Disque du serveur ({{ counts.local }}{{ '+' if counts.local >= 60 }})</option>
+                        <option value="telegram" {{ 'disabled' if not counts.telegram }}>Telegram ({{ counts.telegram }}{{ '+' if counts.telegram >= 60 }})</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Chemin testé</label>
+                    <select name="target" class="form-select form-select-sm">
+                        <option value="internal">Interne (application seule)</option>
+                        <option value="domain">Via le domaine (HTTPS + proxy)</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <label class="form-label small text-secondary mb-1">Débit internet du VPS</label>
+                    <div class="input-group input-group-sm">
+                        <input name="bandwidth_mbps" class="form-control" placeholder="ex. 1000" inputmode="decimal">
+                        <span class="input-group-text">Mbit/s</span>
+                    </div>
+                </div>
+                <div class="col-12 mt-3">
+                    <button class="btn btn-sm btn-brand w-100" id="startBtn" {{ 'disabled' if running }}
+                            onclick="return confirm('Lancer le test ? Le serveur sera très sollicité pendant quelques minutes : les vrais utilisateurs peuvent ressentir des ralentissements.')">
+                        <i class="bi bi-play-fill"></i> Lancer le test
+                    </button>
+                </div>
+            </form>
+            <form method="post" action="/admin/loadtest/stop" class="mt-2" id="stopForm" style="{{ '' if running else 'display:none' }}">
+                <button class="btn btn-sm btn-outline-danger w-100"><i class="bi bi-stop-fill"></i> Arrêter le test</button>
+            </form>
+            <div class="small text-secondary mt-3">
+                Serveur : <strong class="text-white">{{ system.cpus }} cœur(s)</strong>{% if system.ram_gb %} · <strong class="text-white">{{ system.ram_gb }} Go</strong> de RAM{% endif %}
+                · débit moyen des vidéos <strong class="text-white">{{ '%.1f'|format(avg_bitrate / 1e6) }} Mbit/s</strong>
+            </div>
+            <div class="small text-secondary mt-2">
+                <i class="bi bi-info-circle"></i> Le test tourne sur le VPS lui-même : il mesure la puissance du serveur
+                (processeur, disque, Telegram), pas la connexion internet. Indiquez le débit de votre offre VPS
+                pour estimer aussi la limite réseau.
+                Avec des vidéos Telegram, chaque spectateur virtuel télécharge depuis Telegram : évitez les tests trop longs.
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card p-3 h-100" id="summaryCard">
+            <h6 class="fw-bold mb-2"><i class="bi bi-clipboard-data"></i> Résultat</h6>
+            <div id="liveBox" class="p-3 rounded mb-3" style="background:var(--surface2);display:none">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <span class="status-dot"></span><strong class="text-white" id="liveMsg"></strong>
+                </div>
+                <div class="progress mb-2" style="height:6px;background:var(--surface)"><div class="progress-bar" id="liveBar" style="width:0%;background:linear-gradient(90deg,#ff2e55,#ff7a45)"></div></div>
+                <div class="small text-secondary" id="liveStats"></div>
+            </div>
+            <div id="summary" class="mb-2"></div>
+            <div class="small text-secondary" id="message"></div>
+        </div>
+    </div>
+</div>
+
+<div class="card p-3">
+    <h6 class="fw-bold mb-2"><i class="bi bi-table"></i> Détail par palier</h6>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle small mb-0">
+            <thead><tr>
+                <th>Spectateurs</th><th>Lecture fluide</th><th>Démarrage vidéo (médian / 95 %)</th>
+                <th>API (médian / 95 %)</th><th>Débit servi</th><th>Erreurs</th><th>CPU (moy. / max)</th><th>RAM</th><th></th>
+            </tr></thead>
+            <tbody id="stepsBody"><tr><td colspan="9" class="text-secondary text-center py-4">Aucun test pour le moment.</td></tr></tbody>
+        </table>
+    </div>
+    <div class="small text-secondary mt-2">
+        Un palier est <span class="text-success">réussi</span> si au moins 95 % des spectateurs regardent sans attente,
+        avec moins de 2 % d'erreurs, une API sous 2 s et une vidéo qui démarre en moins de 4 s (95 % des cas).
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const initial = {{ status|tojson }};
+initial.running = {{ 'true' if running else 'false' }};
+</script>
+<script>{% raw %}
+const fmtS = v => v == null ? '—' : (v < 1 ? Math.round(v * 1000) + ' ms' : v.toFixed(1) + ' s');
+const fmtP = v => v == null ? '—' : v + ' %';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+function render(d) {
+    const running = d.running || d.state === 'running';
+    document.getElementById('startBtn').disabled = running;
+    document.getElementById('stopForm').style.display = running ? '' : 'none';
+    const steps = d.steps || [];
+    const cfg = d.config || {};
+
+    // Live progress
+    const live = document.getElementById('liveBox');
+    live.style.display = running ? '' : 'none';
+    if (running) {
+        const total = (cfg.steps || []).length || 1;
+        const cur = d.current || {};
+        const left = cur.ends_at ? Math.max(0, Math.round(cur.ends_at - Date.now() / 1000)) : null;
+        document.getElementById('liveMsg').textContent = d.message || 'Test en cours…';
+        document.getElementById('liveBar').style.width = Math.round(100 * steps.length / total) + '%';
+        document.getElementById('liveStats').textContent =
+            `Palier ${Math.min(steps.length + 1, total)} / ${total}` +
+            (cur.mbps != null ? ` · ${cur.mbps} Mbit/s servis` : '') +
+            (cur.errors ? ` · ${cur.errors} erreur(s)` : '') +
+            (left != null ? ` · encore ${left} s` : '');
+    }
+
+    // Steps table
+    const body = document.getElementById('stepsBody');
+    if (steps.length) {
+        body.innerHTML = steps.map(s => `
+            <tr>
+                <td class="fw-semibold text-white">${s.users}</td>
+                <td class="${s.smooth_pct >= 95 ? 'text-success' : s.smooth_pct >= 80 ? 'text-warning' : 'text-danger'}">${s.smooth_pct} %</td>
+                <td>${fmtS(s.ttfb_p50)} / ${fmtS(s.ttfb_p95)}</td>
+                <td>${fmtS(s.api_p50)} / ${fmtS(s.api_p95)}</td>
+                <td>${s.mbps} Mbit/s</td>
+                <td class="${s.error_pct > 2 ? 'text-danger' : ''}" title="${esc(s.last_error)}">${s.errors} (${s.error_pct} %)</td>
+                <td>${fmtP(s.cpu)} / ${fmtP(s.cpu_max)}</td>
+                <td>${fmtP(s.ram)}</td>
+                <td>${s.healthy ? '<span class="badge text-bg-success">réussi</span>' : '<span class="badge text-bg-danger">saturé</span>'}</td>
+            </tr>`).join('');
+    }
+
+    // Summary
+    const summary = document.getElementById('summary');
+    if (!steps.length) {
+        summary.innerHTML = running ? '' : '<div class="text-secondary small">Lancez un test pour estimer la capacité de votre serveur.</div>';
+    } else {
+        const cap = d.capacity || 0;
+        const saturated = steps.some(s => !s.healthy);
+        const net = d.network_capacity;
+        const last = steps[steps.length - 1];
+        const final = net ? Math.min(cap, net) : cap;
+        let html = `<div class="d-flex align-items-end gap-2 mb-1">
+            <span class="display-6 fw-bold text-white">${saturated || running ? '' : '≥ '}${final}</span>
+            <span class="text-secondary mb-2">spectateurs simultanés en lecture fluide</span></div>`;
+        if (!cap) {
+            html += `<div class="alert alert-danger small py-2">Le serveur sature dès le premier palier (${steps[0].users} spectateurs). ${esc(steps[0].last_error)}</div>`;
+        }
+        html += '<ul class="small mb-2 ps-3">';
+        html += `<li>Puissance du serveur : <strong class="text-white">${saturated ? cap : 'au moins ' + cap}</strong> spectateurs`
+              + (saturated ? '' : ' (non saturé : relancez avec des paliers plus élevés)') + '</li>';
+        if (net) {
+            html += `<li>Limite réseau (${cfg.bandwidth_mbps} Mbit/s à 80 % ÷ ${(cfg.bitrate_bps / 1e6).toFixed(1)} Mbit/s par vidéo) :
+                     <strong class="text-white">${net}</strong> spectateurs${net < cap ? ' ← c\'est la connexion qui limite' : ''}</li>`;
+        } else {
+            html += `<li>Limite réseau : indiquez le débit internet de votre VPS pour l'estimer
+                     (chaque spectateur consomme environ ${(cfg.bitrate_bps / 1e6).toFixed(1)} Mbit/s).</li>`;
+        }
+        if (final) {
+            html += `<li>En pratique, 5 à 10 % des utilisateurs actifs d'une journée regardent en même temps aux heures de pointe :
+                     environ <strong class="text-white">${(final * 10).toLocaleString('fr')} à ${(final * 20).toLocaleString('fr')}</strong> utilisateurs actifs par jour.</li>`;
+        }
+        if (saturated) {
+            const bad = steps.find(s => !s.healthy);
+            const why = [];
+            if (bad.smooth_pct < 95) why.push('vidéos qui se bloquent');
+            if (bad.error_pct > 2) why.push('erreurs');
+            if ((bad.api_p95 || 0) >= 2) why.push('API lente');
+            if ((bad.ttfb_p95 || 0) >= 4) why.push('démarrage vidéo lent');
+            if ((bad.cpu_max || 0) >= 90) why.push('processeur à ' + bad.cpu_max + ' %');
+            html += `<li>Saturation à ${bad.users} spectateurs : ${why.join(', ') || 'seuils dépassés'}.</li>`;
+        }
+        html += '</ul>';
+        if (cfg.source) {
+            html += `<div class="small text-secondary">Vidéos : ${{all: 'toutes', local: 'disque du serveur', telegram: 'Telegram'}[cfg.source]} ·
+                     chemin : ${cfg.target === 'domain' ? 'via le domaine' : 'interne'} · paliers de ${cfg.step_seconds} s</div>`;
+        }
+        summary.innerHTML = html;
+    }
+    document.getElementById('message').textContent = running ? '' : (d.message || '');
+}
+
+render(initial);
+
+async function poll() {
+    try {
+        const d = await (await fetch('/admin/loadtest/status', {credentials: 'same-origin'})).json();
+        render(d);
+        if (d.running || d.state === 'running') setTimeout(poll, 2000);
+    } catch (e) { setTimeout(poll, 5000); }
+}
+if (initial.running) setTimeout(poll, 2000);
+{% endraw %}</script>
+{% endblock %}

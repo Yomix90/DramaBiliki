@@ -912,3 +912,107 @@ async def tg_orphans_attach(request: Request, db: Session = Depends(get_db), adm
     uploads.refresh_series_counts(db, series.id)
     db.commit()
     return _back(f"/admin/series/{series.id}", f"{added} vidéo(s) ajoutée(s) à « {series.title} »")
+
+
+# ---------------------------------------------------------------------------
+# Load test: how many simultaneous viewers can the server handle?
+# ---------------------------------------------------------------------------
+
+LOADTEST_PRESETS = {
+    "light": [5, 10, 20, 40],
+    "standard": [10, 25, 50, 100, 150],
+    "intense": [25, 50, 100, 200, 300, 500],
+}
+DEFAULT_BITRATE = 1_500_000  # typical 720p vertical short drama
+
+
+def _loadtest_episodes(db: Session, source: str) -> list:
+    query = db.query(Episode).join(Series).filter(Series.status == "active")
+    if source == "local":
+        query = query.filter(Episode.local_file.isnot(None), Episode.local_file != "")
+    elif source == "telegram":
+        query = query.filter(Episode.tg_message_id.isnot(None), or_(Episode.local_file.is_(None), Episode.local_file == ""))
+    else:
+        query = query.filter(or_(Episode.tg_message_id.isnot(None), (Episode.local_file.isnot(None) & (Episode.local_file != ""))))
+    out = []
+    for ep in query.order_by(func.random()).limit(60).all():
+        bitrate = int(ep.file_size * 8 / ep.duration) if ep.file_size and ep.duration and ep.duration > 10 else 0
+        out.append({"series_id": ep.series_id, "num": ep.num, "bitrate_bps": bitrate if 150_000 < bitrate < 20_000_000 else 0})
+    return out
+
+
+@router.get("/loadtest", response_class=HTMLResponse)
+async def loadtest_page(request: Request, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    from bridge import loadtest
+    counts = {src: len(_loadtest_episodes(db, src)) for src in ("all", "local", "telegram")}
+    sample = _loadtest_episodes(db, "all")
+    rates = [e["bitrate_bps"] for e in sample if e["bitrate_bps"]]
+    avg_bitrate = int(sum(rates) / len(rates)) if rates else DEFAULT_BITRATE
+    return _page(request, "loadtest.html", admin=admin, status=loadtest.read_status(), running=loadtest.is_running(),
+                 counts=counts, avg_bitrate=avg_bitrate, presets=LOADTEST_PRESETS, system=loadtest.system_info())
+
+
+@router.get("/loadtest/status")
+async def loadtest_status(admin: str = Depends(require_admin)):
+    from bridge import loadtest
+    data = loadtest.read_status()
+    data["running"] = loadtest.is_running()
+    return JSONResponse(data)
+
+
+@router.post("/loadtest/start")
+async def loadtest_start(
+    request: Request,
+    preset: str = Form("standard"),
+    custom_steps: str = Form(""),
+    step_seconds: int = Form(45),
+    source: str = Form("all"),
+    target: str = Form("internal"),
+    bandwidth_mbps: str = Form(""),
+    db: Session = Depends(get_db),
+    admin: str = Depends(require_admin),
+):
+    from bridge import loadtest
+    from bridge.urls import public_base_url
+    if custom_steps.strip():
+        try:
+            steps = sorted({int(x) for x in re.split(r"[\s,;]+", custom_steps.strip()) if x})
+        except ValueError:
+            return _back("/admin/loadtest", "Paliers invalides (ex. 10, 50, 100)", "danger")
+    else:
+        steps = LOADTEST_PRESETS.get(preset, LOADTEST_PRESETS["standard"])
+    steps = [n for n in steps if 1 <= n <= loadtest.MAX_USERS]
+    if not steps:
+        return _back("/admin/loadtest", f"Choisissez entre 1 et {loadtest.MAX_USERS} spectateurs", "danger")
+    episodes = _loadtest_episodes(db, source)
+    if not episodes:
+        return _back("/admin/loadtest", "Aucun épisode lisible pour cette source", "danger")
+    rates = [e["bitrate_bps"] for e in episodes if e["bitrate_bps"]]
+    base_url = public_base_url(request) if target == "domain" else f"http://127.0.0.1:{settings.PORT}"
+    try:
+        bandwidth = float(bandwidth_mbps.replace(",", ".")) if bandwidth_mbps.strip() else 0
+    except ValueError:
+        bandwidth = 0
+    config = {
+        "base_url": base_url,
+        "steps": steps,
+        "step_seconds": max(20, min(int(step_seconds), 300)),
+        "source": source,
+        "target": target,
+        "episodes": episodes,
+        "bitrate_bps": int(sum(rates) / len(rates)) if rates else DEFAULT_BITRATE,
+        "bandwidth_mbps": bandwidth,
+        "stop_on_failure": True,
+    }
+    try:
+        loadtest.start(config)
+    except RuntimeError as e:
+        return _back("/admin/loadtest", str(e), "warning")
+    return _back("/admin/loadtest", "Test de charge lancé", "info")
+
+
+@router.post("/loadtest/stop")
+async def loadtest_stop(admin: str = Depends(require_admin)):
+    from bridge import loadtest
+    loadtest.stop()
+    return _back("/admin/loadtest", "Test arrêté", "info")

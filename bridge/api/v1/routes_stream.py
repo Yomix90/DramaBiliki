@@ -10,7 +10,7 @@ import httpx
 
 from bridge.config import settings
 from bridge.source_session import source_headers
-from bridge.database import get_db
+from bridge.database import SessionLocal, get_db
 from bridge.models import Episode, Series, TelegramChannel
 from bridge.uploads import local_video_path
 from bridge.streamer import stream_resolver
@@ -197,7 +197,6 @@ async def stream_telegram_episode(
     series_id_or_slug: str,
     ep_file: str,
     request: Request,
-    db: Session = Depends(get_db),
 ):
     """Streams the episode video posted in a Telegram channel, e.g. /stream/12/3.mp4."""
     match = re.fullmatch(r"(\d{1,5})\.mp4", ep_file)
@@ -205,17 +204,33 @@ async def stream_telegram_episode(
         raise HTTPException(status_code=404, detail="Not found")
     ep_num = int(match.group(1))
 
-    query = db.query(Series)
-    series = (
-        query.filter(Series.id == int(series_id_or_slug)).first()
-        if series_id_or_slug.isdigit()
-        else query.filter(Series.slug == series_id_or_slug).first()
-    )
-    if not series:
-        raise HTTPException(status_code=404, detail="Series not found")
-    episode = db.query(Episode).filter(Episode.series_id == series.id, Episode.num == ep_num).first()
-    from bridge.activity import record_stream
-    record_stream(request.client.host if request.client else "?", series.id, ep_num)
+    # Short-lived session: a playback lasts minutes and must not hold a pooled
+    # DB connection (the pool would run out after ~15 viewers and block the server).
+    db = SessionLocal()
+    try:
+        query = db.query(Series)
+        series = (
+            query.filter(Series.id == int(series_id_or_slug)).first()
+            if series_id_or_slug.isdigit()
+            else query.filter(Series.slug == series_id_or_slug).first()
+        )
+        if not series:
+            raise HTTPException(status_code=404, detail="Series not found")
+        series_id = series.id
+        episode = db.query(Episode).filter(Episode.series_id == series.id, Episode.num == ep_num).first()
+        if episode:
+            db.expunge(episode)
+        channel = (
+            db.query(TelegramChannel).filter(TelegramChannel.peer_id == episode.tg_peer_id).first()
+            if episode and episode.tg_message_id else None
+        )
+        access_hash = channel.access_hash if channel else None
+    finally:
+        db.close()
+
+    if not request.headers.get("x-load-test"):  # simulated viewers are not real activity
+        from bridge.activity import record_stream
+        record_stream(request.client.host if request.client else "?", series_id, ep_num)
     if not episode:
         raise HTTPException(status_code=404, detail="Episode not available")
 
@@ -233,14 +248,12 @@ async def stream_telegram_episode(
     if cached.is_file():
         return FileResponse(cached, media_type=episode.mime_type or "video/mp4", headers={"Cache-Control": "public, max-age=86400"})
 
-    channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == episode.tg_peer_id).first()
-    access_hash = channel.access_hash if channel else None
     try:
         message = await telegram_service.get_message(episode.tg_peer_id, access_hash, episode.tg_message_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Video removed from the channel")
     except Exception as e:
-        logger.error(f"Telegram stream unavailable for {series.id}/{ep_num}: {e}")
+        logger.error(f"Telegram stream unavailable for {series_id}/{ep_num}: {e}")
         raise HTTPException(status_code=503, detail="Telegram source unavailable")
 
     size = message.file.size or episode.file_size or 0

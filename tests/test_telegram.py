@@ -347,3 +347,34 @@ def test_telegram_tab_lists_accounts(monkeypatch):
     assert "Alice" in page and "Bob" in page
     assert "Ajouter un autre compte" in page
     assert "Créer une nouvelle chaîne Telegram" in page and "Créer avec : Bob" in page
+
+
+def test_loadtest_page_and_start(monkeypatch):
+    from bridge import loadtest
+    started = {}
+    monkeypatch.setattr(loadtest, "start", lambda cfg: started.update(cfg))
+    init_db()
+    db = SessionLocal()
+    series = Series(source_id="lt-1", slug="lt-1", title="LT", status="active", source_type="upload")
+    db.add(series)
+    db.commit()
+    db.add(Episode(series_id=series.id, num=1, local_file="x.mp4", duration=100, file_size=25_000_000))
+    db.commit()
+    with TestClient(app) as client:
+        _admin(client)
+        page = client.get("/admin/loadtest").text
+        assert "Test de charge" in page and "Lancer le test" in page
+        r = client.post("/admin/loadtest/start", data={"custom_steps": "3, 9", "step_seconds": "30", "source": "local",
+                                                       "target": "internal", "bandwidth_mbps": "1000"}, follow_redirects=False)
+        assert r.status_code == 303
+        assert client.get("/admin/loadtest/status").json()["state"] in ("idle", "running", "done", "stopped")
+    assert started["steps"] == [3, 9] and started["bandwidth_mbps"] == 1000
+    mine = [e for e in started["episodes"] if e["series_id"] == series.id]
+    assert mine and mine[0]["bitrate_bps"] == 2_000_000
+    data = {"config": {"bitrate_bps": 2_000_000, "bandwidth_mbps": 1000},
+            "steps": [{"users": 3, "healthy": True}, {"users": 9, "healthy": False}]}
+    loadtest.finalize(data)
+    assert data["capacity"] == 3 and data["network_capacity"] == 400
+    db.delete(series)
+    db.commit()
+    db.close()
