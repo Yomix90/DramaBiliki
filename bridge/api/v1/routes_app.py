@@ -1,7 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from bridge.accel import file_response
 
 from bridge import app_settings
 from bridge.auth import get_optional_user
@@ -61,13 +61,23 @@ download_router = APIRouter(tags=["Mobile app"])
 
 
 @download_router.get("/download/app.apk")
-async def download_apk():
+async def download_apk(request: Request):
     if not LATEST_APK.is_file():
         raise HTTPException(status_code=404, detail="No APK published yet")
     version = app_settings.get("app_latest_version")
-    return FileResponse(
+    return file_response(
         LATEST_APK,
-        media_type="application/vnd.android.package-archive",
+        request,
+        "application/vnd.android.package-archive",
+        {"Cache-Control": "no-cache"},
         filename=f"DramaBiliki-{version}.apk",
-        headers={"Cache-Control": "no-cache"},
     )
+
+
+@download_router.get("/health/accel")
+async def accel_self_check(request: Request):
+    """Used by docker/start.sh to check that nginx really serves files for Python."""
+    probe = settings.MEDIA_DIR / ".accel-check"
+    if not probe.is_file():
+        raise HTTPException(status_code=404, detail="No probe file")
+    return file_response(probe, request, "text/plain", {"Cache-Control": "no-store"})

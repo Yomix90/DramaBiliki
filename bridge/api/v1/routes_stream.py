@@ -8,6 +8,7 @@ from telethon import errors as tg_errors
 from sqlalchemy.orm import Session
 import httpx
 
+from bridge.accel import file_response
 from bridge.config import settings
 from bridge.source_session import source_headers
 from bridge.database import SessionLocal, get_db
@@ -239,7 +240,7 @@ async def stream_telegram_episode(
     if local is not None:
         if not local.is_file():
             raise HTTPException(status_code=404, detail="Video file missing on the server")
-        return FileResponse(local, media_type=episode.mime_type or "video/mp4", headers={"Cache-Control": "public, max-age=86400"})
+        return file_response(local, request, episode.mime_type or "video/mp4", {"Cache-Control": "public, max-age=86400"})
 
     if not episode.tg_message_id:
         raise HTTPException(status_code=404, detail="Episode not available")
@@ -253,11 +254,11 @@ async def stream_telegram_episode(
     optimized = telegram_cache.lookup(episode.tg_peer_id, episode.tg_message_id)
     client_id = request.client.host if request.client else "?"
     if choose_version(client_id, series_id, ep_num, range_start, optimized is not None) == "cache":
-        return FileResponse(optimized, media_type="video/mp4", headers={"Cache-Control": "public, max-age=86400"})
+        return file_response(optimized, request, "video/mp4", {"Cache-Control": "public, max-age=86400"})
 
     cached = _cache_path(episode)  # legacy TG_CACHE_VIDEOS copy: same bytes as on Telegram
     if cached.is_file():
-        return FileResponse(cached, media_type=episode.mime_type or "video/mp4", headers={"Cache-Control": "public, max-age=86400"})
+        return file_response(cached, request, episode.mime_type or "video/mp4", {"Cache-Control": "public, max-age=86400"})
 
     if not request.headers.get("x-load-test"):
         telegram_cache.note_request(episode.tg_peer_id, access_hash, episode.tg_message_id)

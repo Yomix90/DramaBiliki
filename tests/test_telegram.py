@@ -448,3 +448,34 @@ def test_traffic_counter_counts_video_bytes():
     activity.save_traffic()
     activity._traffic["month"] = ""  # reload from the database
     assert activity.traffic()["used"] - before == 10 ** 9
+
+
+def test_nginx_accel_hands_local_videos_to_nginx(monkeypatch):
+    from bridge import activity
+    from bridge.config import settings
+    from bridge.uploads import LOCAL_VIDEOS_DIR
+    init_db()
+    LOCAL_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+    (LOCAL_VIDEOS_DIR / "accel.mp4").write_bytes(b"V" * 1000)
+    (settings.MEDIA_DIR / ".accel-check").write_text("token")
+    db = SessionLocal()
+    series = Series(source_id="accel-1", slug="accel-1", title="Accel", status="active", source_type="upload")
+    db.add(series)
+    db.commit()
+    db.add(Episode(series_id=series.id, num=1, local_file="accel.mp4", mime_type="video/mp4"))
+    db.commit()
+    with TestClient(app) as client:
+        # Without nginx: Python sends the file
+        r = client.get(f"/stream/{series.id}/1.mp4")
+        assert r.content == b"V" * 1000 and "x-accel-redirect" not in r.headers
+        monkeypatch.setenv("NGINX_ACCEL", "1")
+        before = activity.traffic()["used"]
+        r = client.get(f"/stream/{series.id}/1.mp4", headers={"Range": "bytes=100-299"})
+        assert r.headers["x-accel-redirect"] == "/_protected/videos/local/accel.mp4"
+        assert r.content == b""
+        assert activity.traffic()["used"] - before == 200  # counted for nginx
+        r = client.get("/health/accel")
+        assert r.headers["x-accel-redirect"] == "/_protected/.accel-check"
+    db.delete(series)
+    db.commit()
+    db.close()
