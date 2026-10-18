@@ -237,6 +237,16 @@
                                 <button class="btn btn-sm btn-brand w-100" {{ 'disabled' if sync_running or not tg.authorized }}><i class="bi bi-arrow-repeat"></i> Synchroniser toutes les chaînes</button>
                             </form>
                             <p class="small text-secondary mb-2">Import automatique toutes les {{ settings.TG_SYNC_INTERVAL_MINUTES }} min.</p>
+                            {% if tg.accounts|length > 1 %}
+                            <div class="small text-secondary mb-2 p-2 rounded" style="background:var(--surface2)">
+                                <i class="bi bi-diagram-3"></i> Les vidéos sont téléchargées par le compte le moins occupé parmi ceux qui sont membres de la chaîne
+                                (colonne « Lecteurs »). Plus de comptes = plus de spectateurs avant que Telegram ne ralentisse.
+                                {% if tg_active %}<br>En cours : {% for acc, n in tg_active.items() %}{% for a in tg.accounts if a.id == acc %}{{ a.name }}{% endfor %} {{ n }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}
+                                <form method="post" action="/admin/telegram/access/refresh" class="mt-1">
+                                    <button class="btn btn-sm btn-link p-0">Actualiser les comptes membres</button>
+                                </form>
+                            </div>
+                            {% endif %}
                             {% endif %}
 
                             <div class="p-2 rounded mt-2" style="background:var(--surface2)">
@@ -387,7 +397,7 @@
                         <h6 class="fw-bold mb-3">Chaînes liées</h6>
                         <div class="table-responsive">
                             <table class="table table-hover align-middle">
-                                <thead><tr><th>Chaîne</th><th>Compte</th><th>Mode</th><th>Vidéos</th><th>Dernière synchro</th><th class="text-end">Actions</th></tr></thead>
+                                <thead><tr><th>Chaîne</th><th>Compte principal</th><th title="Comptes qui se partagent les téléchargements">Lecteurs</th><th>Mode</th><th>Vidéos</th><th>Dernière synchro</th><th class="text-end">Actions</th></tr></thead>
                                 <tbody>
                                 {% for c in tg_channels %}
                                     <tr class="{{ '' if c.enabled else 'opacity-50' }}">
@@ -403,6 +413,16 @@
                                                     {% for a in tg.accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == c.account_id }}>{{ a.name or ('Compte #' ~ a.id) }}</option>{% endfor %}
                                                 </select>
                                             </form>
+                                        </td>
+                                        <td class="text-nowrap">
+                                            {% set n = tg_readers.get(c.peer_id, 1) %}
+                                            <span class="badge {{ 'text-bg-success' if n > 1 else 'text-bg-secondary' }}" title="{{ n }} compte(s) se partagent les téléchargements de cette chaîne">{{ n }} <i class="bi bi-person"></i></span>
+                                            {% if live_accounts|length > n %}
+                                            <form method="post" action="/admin/telegram/channels/{{ c.id }}/join-all" class="d-inline"
+                                                  onsubmit="return confirm('Faire rejoindre cette chaîne à tous vos comptes Telegram connectés ? Ses vidéos seront ensuite téléchargées par le compte le moins occupé.')">
+                                                <button class="btn btn-sm btn-outline-info py-0" title="Ajouter tous mes comptes à cette chaîne"><i class="bi bi-people"></i> +</button>
+                                            </form>
+                                            {% endif %}
                                         </td>
                                         <td>
                                             <form method="post" action="/admin/telegram/channels/{{ c.id }}/mode">
@@ -431,7 +451,7 @@
                                         </td>
                                     </tr>
                                 {% else %}
-                                    <tr><td colspan="6" class="text-center text-secondary py-4">Aucune chaîne liée pour le moment.</td></tr>
+                                    <tr><td colspan="7" class="text-center text-secondary py-4">Aucune chaîne liée pour le moment.</td></tr>
                                 {% endfor %}
                                 </tbody>
                             </table>

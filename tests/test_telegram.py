@@ -479,3 +479,69 @@ def test_nginx_accel_hands_local_videos_to_nginx(monkeypatch):
     db.delete(series)
     db.commit()
     db.close()
+
+
+def test_downloads_are_spread_between_member_accounts(monkeypatch):
+    from bridge.models import TelegramAccount, TelegramChannelAccess
+    from bridge.telegram import client as tg_client
+    init_db()
+    db = SessionLocal()
+    accounts = [TelegramAccount(session=f"s{i}", name=f"Acc{i}") for i in range(3)]
+    db.add_all(accounts)
+    db.commit()
+    ch = TelegramChannel(peer_id=-1009990555, access_hash=10, title="Partagée", account_id=accounts[0].id)
+    db.add(ch)
+    db.add_all([TelegramChannelAccess(peer_id=ch.peer_id, account_id=a.id, access_hash=20 + i) for i, a in enumerate(accounts[1:])])
+    db.commit()
+    telegram_service._accounts.clear()
+    telegram_service._readers.clear()
+    telegram_service._messages.clear()
+    telegram_service._active.clear()
+
+    class FakeClient:
+        def __init__(self, acc):
+            self.acc = acc
+
+        async def get_messages(self, peer, ids):
+            return SimpleNamespace(_client=self, acc=self.acc, peer_hash=peer.access_hash, media=None,
+                                   file=SimpleNamespace(size=10))
+
+        async def iter_download(self, media, offset, request_size, file_size):
+            await asyncio.sleep(0.05)
+            yield b"x" * 10
+
+    async def fake_authorized(self):
+        if getattr(self, "_client", None) is None:
+            self._client = FakeClient(self.account_id)
+        return self._client
+
+    monkeypatch.setattr(tg_client.AccountClient, "authorized_client", fake_authorized)
+    assert telegram_service.reader_counts()[ch.peer_id] == 3
+
+    async def scenario():
+        used = []
+        streams = []
+        for i in range(3):
+            msg = await telegram_service.get_message(ch.peer_id, 10, 100 + i)
+            used.append((msg.acc, msg.peer_hash))
+            gen = telegram_service.iter_bytes(msg, 0, 9)
+            await gen.__anext__()  # download in progress: this account is busy
+            streams.append(gen)
+        for gen in streams:
+            await gen.aclose()
+        return used
+
+    used = asyncio.run(scenario())
+    # Three simultaneous playbacks -> three different accounts, each with its own access hash
+    assert sorted(acc for acc, _ in used) == sorted(a.id for a in accounts)
+    assert dict(used)[accounts[0].id] == 10 and dict(used)[accounts[2].id] == 21
+    assert telegram_service.active_downloads() == {}
+
+    db.query(TelegramChannelAccess).filter(TelegramChannelAccess.peer_id == ch.peer_id).delete()
+    db.delete(ch)
+    for a in accounts:
+        db.delete(a)
+    db.commit()
+    db.close()
+    telegram_service._accounts.clear()
+    telegram_service._readers.clear()

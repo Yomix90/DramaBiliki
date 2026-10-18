@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import math
 import urllib.parse
@@ -192,6 +193,8 @@ async def admin_dashboard(
             "storage": storage,
             "tg": tg_status,
             "tg_channels": tg_channels,
+            "tg_readers": telegram_service.reader_counts() if tg_channels else {},
+            "tg_active": telegram_service.active_downloads(),
             "tg_available": tg_available,
             "tg_dialogs": bool(tg_dialogs),
         },
@@ -365,6 +368,7 @@ async def tg_sign_in(code: str = Form(""), password: str = Form(""), admin: str 
         return _tg_redirect("Ce compte a la validation en deux étapes : entrez votre mot de passe Telegram.", "warning")
     except Exception as e:
         return _tg_redirect(_tg_error(e), "danger")
+    _refresh_access_soon()
     return _tg_redirect("Compte Telegram connecté. Ajoutez ou créez maintenant vos chaînes.", tg_dialogs=1)
 
 
@@ -407,6 +411,18 @@ async def tg_logout_legacy(db: Session = Depends(get_db), admin: str = Depends(r
     return await tg_logout(rows[0].id, db=db, admin=admin)
 
 
+def _refresh_access_soon() -> None:
+    """Detects in the background which accounts are members of the linked channels."""
+    async def run():
+        try:
+            await telegram_service.refresh_access()
+        except Exception as e:
+            logging.getLogger("bridge.admin").warning(f"Telegram access refresh failed: {e}")
+    task = asyncio.create_task(run())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
 def _link_channel(db: Session, entity, account_id: int, mode: str) -> TelegramChannel:
     from telethon import utils as tg_utils
     peer_id = tg_utils.get_peer_id(entity)
@@ -421,6 +437,7 @@ def _link_channel(db: Session, entity, account_id: int, mode: str) -> TelegramCh
     channel.mode = mode if mode in ("caption", "single") else "caption"
     channel.enabled = True
     db.commit()
+    _refresh_access_soon()
     return channel
 
 
@@ -450,6 +467,32 @@ async def tg_create_channel(
         app_settings.set_many({"upload_channel_id": str(channel.id), "upload_destination": "telegram"})
         msg += " Elle reçoit désormais les vidéos téléversées."
     return _tg_redirect(msg, "warning" if warning else "success")
+
+
+@router.post("/telegram/channels/{channel_id}/join-all")
+async def tg_channel_join_all(channel_id: int, db: Session = Depends(get_db), admin: str = Depends(require_admin)):
+    """Every connected account joins the channel: its downloads are then spread between them."""
+    channel = db.get(TelegramChannel, channel_id)
+    if not channel:
+        return _tg_redirect("Chaîne introuvable.", "danger")
+    try:
+        joined, problems = await telegram_service.join_all_accounts(channel)
+    except Exception as e:
+        return _tg_redirect(_tg_error(e), "danger")
+    readers = telegram_service.reader_counts().get(channel.peer_id, 1)
+    msg = f"« {channel.title} » : {joined} compte(s) ajouté(s), {readers} compte(s) se partagent maintenant ses téléchargements."
+    if problems:
+        return _tg_redirect(msg + " Échecs : " + ", ".join(problems), "warning")
+    return _tg_redirect(msg)
+
+
+@router.post("/telegram/access/refresh")
+async def tg_access_refresh(admin: str = Depends(require_admin)):
+    try:
+        result = await telegram_service.refresh_access()
+    except Exception as e:
+        return _tg_redirect(_tg_error(e), "danger")
+    return _tg_redirect(f"Comptes membres détectés ({len(result)} compte(s) analysé(s)).")
 
 
 @router.post("/telegram/channels/{channel_id}/account")

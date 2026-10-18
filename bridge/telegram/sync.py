@@ -235,6 +235,9 @@ async def run_telegram_sync(channel_id: Optional[int] = None, full: bool = False
         logger.info("Skipping Telegram sync: another sync is already running.")
         return None
 
+    # Which connected accounts can read each channel (downloads are spread between them)
+    await telegram_service.refresh_access_if_stale()
+
     async with _sync_lock:
         db = SessionLocal()
         # Detection improved (e.g. .ts documents, file names): rescan every channel once.

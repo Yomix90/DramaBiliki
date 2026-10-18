@@ -1,7 +1,7 @@
 import datetime
 from typing import Dict, Any, Optional
 from sqlalchemy import (
-    BigInteger, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, Table, JSON
+    BigInteger, Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Float, Table, JSON, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from bridge.database import Base
@@ -239,3 +239,16 @@ class TelegramChannel(Base):
     last_synced_at = Column(DateTime, nullable=True)
     last_error = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class TelegramChannelAccess(Base):
+    """Accounts that can read a linked channel (each one has its own access hash).
+    Downloads of the channel's videos are spread between them."""
+    __tablename__ = "telegram_channel_access"
+    __table_args__ = (UniqueConstraint("peer_id", "account_id", name="uq_channel_access"),)
+
+    id = Column(Integer, primary_key=True)
+    peer_id = Column(BigInteger, index=True, nullable=False)
+    account_id = Column(Integer, index=True, nullable=False)
+    access_hash = Column(BigInteger, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow)

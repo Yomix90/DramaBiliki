@@ -9,8 +9,14 @@ persistent data volume.
 
 A channel's access hash is only valid for the account that resolved it, so
 every linked channel remembers its account (TelegramChannel.account_id).
+
+Telegram limits the downloads of each account ("flood wait"). When several
+connected accounts are members of a channel (TelegramChannelAccess), each video
+playback is served by the least busy of them: N accounts ≈ N times more
+simultaneous Telegram downloads before throttling.
 """
 import asyncio
+import contextlib
 import logging
 import time
 from typing import AsyncIterator, Dict, List, Optional, Tuple
@@ -21,7 +27,7 @@ from telethon.tl.types import Channel, InputPeerChannel
 
 from bridge.config import settings
 from bridge.database import SessionLocal
-from bridge.models import AppConfig, TelegramAccount, TelegramChannel
+from bridge.models import AppConfig, TelegramAccount, TelegramChannel, TelegramChannelAccess
 
 logger = logging.getLogger("bridge.telegram")
 
@@ -31,6 +37,8 @@ KEY_API_HASH = "tg_api_hash"
 
 CHUNK_SIZE = 512 * 1024  # Telegram's maximum download request size
 MESSAGE_CACHE_SECONDS = 20 * 60
+READERS_CACHE_SECONDS = 60
+ACCESS_REFRESH_SECONDS = 3600
 
 
 def _get_config(key: str) -> str:
@@ -213,6 +221,17 @@ class AccountClient:
             raise RuntimeError("Ce lien ne correspond pas à une chaîne.")
         return entity
 
+    async def join(self, username: str = "", invite_hash: str = "") -> None:
+        """Joins a public channel (@username) or a private one (invite link hash)."""
+        client = await self._require()
+        try:
+            if username:
+                await client(functions.channels.JoinChannelRequest(await client.get_entity(username)))
+            else:
+                await client(functions.messages.ImportChatInviteRequest(invite_hash))
+        except errors.UserAlreadyParticipantError:
+            pass
+
     async def create_channel(self, title: str, about: str = "", username: str = "") -> Tuple[Channel, str]:
         """Creates a broadcast channel owned by this account (optionally public with @username).
         Returns (channel, warning): the channel stays private when the username is refused."""
@@ -236,8 +255,12 @@ class TelegramService:
     def __init__(self):
         self._accounts: Dict[int, AccountClient] = {}
         self._pending: Optional[AccountClient] = None  # account being linked
-        self._messages: Dict[Tuple[int, int], Tuple[float, object]] = {}
+        self._messages: Dict[Tuple[int, int, Optional[int]], Tuple[float, object]] = {}
         self._migrated = False
+        self._active: Dict[Optional[int], int] = {}  # account id -> downloads in progress
+        self._turn = 0
+        self._readers: Dict[int, Tuple[float, List[Tuple[Optional[int], Optional[int]]]]] = {}
+        self._access_refreshed = 0.0
 
     # -- API credentials (shared by every account) ----------------------
 
@@ -407,10 +430,12 @@ class TelegramService:
             row = db.get(TelegramAccount, account_id)
             if row:
                 db.delete(row)
+            db.query(TelegramChannelAccess).filter(TelegramChannelAccess.account_id == account_id).delete()
             db.commit()
         finally:
             db.close()
         self._messages.clear()
+        self._readers.clear()
 
     # -- channels & messages ---------------------------------------------
 
@@ -449,19 +474,170 @@ class TelegramService:
         real_id, _ = utils.resolve_id(peer_id)
         return InputPeerChannel(channel_id=real_id, access_hash=access_hash or 0)
 
-    async def get_message(self, peer_id: int, access_hash: Optional[int], message_id: int, refresh: bool = False):
-        key = (peer_id, message_id)
-        cached = self._messages.get(key)
-        if cached and not refresh and time.time() - cached[0] < MESSAGE_CACHE_SECONDS:
+    # -- several accounts reading the same channel ---------------------
+
+    def channel_readers(self, peer_id: int, access_hash: Optional[int] = None) -> List[Tuple[Optional[int], Optional[int]]]:
+        """(account id, access hash) of every account able to read the channel, main account first."""
+        cached = self._readers.get(peer_id)
+        if cached and time.time() - cached[0] < READERS_CACHE_SECONDS:
             return cached[1]
-        client = await self.authorized_client(self._account_for_peer(peer_id))
-        if client is None:
+        db = SessionLocal()
+        try:
+            channel = db.query(TelegramChannel).filter(TelegramChannel.peer_id == peer_id).first()
+            readers: List[Tuple[Optional[int], Optional[int]]] = []
+            if channel is not None:
+                readers.append((channel.account_id, channel.access_hash))
+            for row in db.query(TelegramChannelAccess).filter(TelegramChannelAccess.peer_id == peer_id).order_by(TelegramChannelAccess.id):
+                if all(row.account_id != acc for acc, _ in readers):
+                    readers.append((row.account_id, row.access_hash))
+        finally:
+            db.close()
+        if not readers:
+            readers = [(None, access_hash)]
+        self._readers[peer_id] = (time.time(), readers)
+        return readers
+
+    def reader_counts(self) -> Dict[int, int]:
+        """Number of accounts able to read each linked channel."""
+        db = SessionLocal()
+        try:
+            counts: Dict[int, set] = {}
+            for channel in db.query(TelegramChannel).all():
+                counts.setdefault(channel.peer_id, set()).add(channel.account_id)
+            for row in db.query(TelegramChannelAccess).all():
+                counts.setdefault(row.peer_id, set()).add(row.account_id)
+            return {peer: len({a for a in accs if a is not None}) for peer, accs in counts.items()}
+        finally:
+            db.close()
+
+    def _ordered_readers(self, peer_id: int, access_hash: Optional[int]) -> List[Tuple[Optional[int], Optional[int]]]:
+        readers = self.channel_readers(peer_id, access_hash)
+        if len(readers) == 1:
+            return readers
+        self._turn += 1
+        n = len(readers)
+        order = sorted(range(n), key=lambda i: (self._active.get(readers[i][0], 0), (i - self._turn) % n))
+        return [readers[i] for i in order]
+
+    async def get_message(self, peer_id: int, access_hash: Optional[int], message_id: int, refresh: bool = False):
+        """Fetches the message with the least busy account that can read the channel."""
+        last_error: Optional[Exception] = None
+        connected = False
+        for account_id, reader_hash in self._ordered_readers(peer_id, access_hash):
+            key = (peer_id, message_id, account_id)
+            cached = self._messages.get(key)
+            if cached and not refresh and time.time() - cached[0] < MESSAGE_CACHE_SECONDS:
+                return cached[1]
+            account = self.account(account_id)
+            client = await account.authorized_client() if account else None
+            if client is None:
+                continue
+            connected = True
+            try:
+                message = await client.get_messages(self.input_peer(peer_id, reader_hash), ids=message_id)
+            except (errors.ChannelPrivateError, errors.ChannelInvalidError, ValueError) as e:
+                last_error = e  # this account lost access: try another one
+                continue
+            if message is None or message.file is None:
+                raise FileNotFoundError("Vidéo supprimée de la chaîne.")
+            self._messages[key] = (time.time(), message)
+            return message
+        if not connected:
             raise RuntimeError("Compte Telegram non connecté.")
-        message = await client.get_messages(self.input_peer(peer_id, access_hash), ids=message_id)
-        if message is None or message.file is None:
-            raise FileNotFoundError("Vidéo supprimée de la chaîne.")
-        self._messages[key] = (time.time(), message)
-        return message
+        raise last_error or RuntimeError("Aucun compte n'a accès à cette chaîne.")
+
+    async def refresh_access(self) -> Dict[int, int]:
+        """Records which connected accounts are members of each linked channel.
+        Returns {account id: number of linked channels it can read}."""
+        db = SessionLocal()
+        try:
+            linked = {peer for (peer,) in db.query(TelegramChannel.peer_id)}
+        finally:
+            db.close()
+        result: Dict[int, int] = {}
+        for row in self.account_rows():
+            account = self.account(row.id)
+            try:
+                client = await account.authorized_client() if account else None
+            except Exception as e:
+                logger.warning(f"Telegram account {row.id} unavailable: {e}")
+                client = None
+            if client is None:
+                continue
+            found: Dict[int, int] = {}
+            try:
+                async for dialog in client.iter_dialogs():
+                    entity = dialog.entity
+                    if isinstance(entity, Channel):
+                        peer = utils.get_peer_id(entity)
+                        if peer in linked:
+                            found[peer] = entity.access_hash
+            except Exception as e:
+                logger.warning(f"Could not list the channels of account {row.id}: {e}")
+                continue
+            db = SessionLocal()
+            try:
+                existing = {r.peer_id: r for r in db.query(TelegramChannelAccess).filter(TelegramChannelAccess.account_id == row.id)}
+                for peer, access_hash in found.items():
+                    if peer in existing:
+                        existing[peer].access_hash = access_hash
+                    else:
+                        db.add(TelegramChannelAccess(peer_id=peer, account_id=row.id, access_hash=access_hash))
+                for peer, r in existing.items():
+                    if peer not in found:
+                        db.delete(r)
+                db.commit()
+            finally:
+                db.close()
+            result[row.id] = len(found)
+        db = SessionLocal()
+        try:
+            ids = [r.id for r in self.account_rows()]
+            db.query(TelegramChannelAccess).filter(~TelegramChannelAccess.account_id.in_(ids)).delete(synchronize_session=False)
+            db.commit()
+        finally:
+            db.close()
+        self._readers.clear()
+        self._access_refreshed = time.time()
+        return result
+
+    async def refresh_access_if_stale(self) -> None:
+        if time.time() - self._access_refreshed > ACCESS_REFRESH_SECONDS:
+            try:
+                await self.refresh_access()
+            except Exception as e:
+                logger.warning(f"Telegram access refresh failed: {e}")
+
+    async def join_all_accounts(self, channel: TelegramChannel) -> Tuple[int, List[str]]:
+        """Makes every connected account join the channel. Returns (joined, errors)."""
+        main = self.account(channel.account_id)
+        main_client = await main.authorized_client() if main else None
+        if main_client is None:
+            raise RuntimeError("Le compte principal de la chaîne n'est pas connecté.")
+        invite_hash = ""
+        if not channel.username:
+            # Private channel: the main account (admin) creates an invite link
+            try:
+                invite = await main_client(functions.messages.ExportChatInviteRequest(
+                    peer=self.input_peer(channel.peer_id, channel.access_hash)))
+            except errors.ChatAdminRequiredError:
+                raise RuntimeError("Chaîne privée : le compte principal doit être administrateur pour inviter les autres comptes.")
+            invite_hash = invite.link.rstrip("/").split("/")[-1].lstrip("+")
+        joined, problems = 0, []
+        already = {acc for acc, _ in self.channel_readers(channel.peer_id)}
+        for row in self.account_rows():
+            if row.id in already:
+                continue
+            account = self.account(row.id)
+            if await account.authorized_client() is None:
+                continue
+            try:
+                await account.join(username=channel.username or "", invite_hash=invite_hash)
+                joined += 1
+            except Exception as e:
+                problems.append(f"{account.name or row.id} : {type(e).__name__}")
+        await self.refresh_access()
+        return joined, problems
 
     async def delete_messages(self, peer_id: int, access_hash: Optional[int], message_ids: List[int]) -> Tuple[int, str]:
         """Deletes messages from a channel (the account must be admin). Returns (count, error)."""
@@ -482,8 +658,9 @@ class TelegramService:
             except Exception as e:  # network, flood wait...
                 error = f"{type(e).__name__}: {e}"
                 break
-            for mid in batch:
-                self._messages.pop((peer_id, mid), None)
+            gone = {(peer_id, mid) for mid in batch}
+            for key in [k for k in self._messages if (k[0], k[1]) in gone]:
+                self._messages.pop(key, None)
         return deleted, error
 
     async def iter_bytes(self, message, start: int, end: int) -> AsyncIterator[bytes]:
@@ -492,6 +669,25 @@ class TelegramService:
         client = getattr(message, "_client", None) or await self.authorized_client()
         if client is None:
             return
+        async with self.downloading(message):
+            async for chunk in self._iter_download(client, message, start, end):
+                yield chunk
+
+    @contextlib.asynccontextmanager
+    async def downloading(self, message):
+        """Counts a download in progress for the account that fetched the message."""
+        client = getattr(message, "_client", None)
+        account_id = next((a.account_id for a in self._accounts.values() if a._client is client), None)
+        self._active[account_id] = self._active.get(account_id, 0) + 1
+        try:
+            yield
+        finally:
+            self._active[account_id] = max(0, self._active.get(account_id, 1) - 1)
+
+    def active_downloads(self) -> Dict[Optional[int], int]:
+        return {k: v for k, v in self._active.items() if v}
+
+    async def _iter_download(self, client, message, start: int, end: int) -> AsyncIterator[bytes]:
         aligned = start - (start % CHUNK_SIZE)
         skip = start - aligned
         remaining = end - start + 1

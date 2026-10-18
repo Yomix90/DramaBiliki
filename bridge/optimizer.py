@@ -194,7 +194,8 @@ class TelegramCache:
             message = await telegram_service.get_message(peer_id, access_hash, message_id)
             size = message.file.size or 0
             self.evict(extra=size)
-            await message.download_media(file=str(raw))
+            async with telegram_service.downloading(message):
+                await message.download_media(file=str(raw))
             duration = int(getattr(message.file, "duration", None) or 0)
             if needs_compression(raw.stat().st_size, duration) and await compress(raw, opt):
                 self.saved_bytes += raw.stat().st_size - opt.stat().st_size
